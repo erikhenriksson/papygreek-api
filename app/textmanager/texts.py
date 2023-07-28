@@ -2,11 +2,175 @@ import glob
 import os
 from itertools import zip_longest
 from pprint import pprint
-from epidoctokenizer import tokenize_file, tokenize_string
+from papygreektokenizer import tokenize_file, tokenize_string
 from tabulate import tabulate
-
+from tqdm import tqdm
+import unicodedata
+import json
 from ..config import db, IDP_PATH
 from ..routes import tokens
+
+punct = list(",..·;;·.§")
+
+
+def plain(x: str) -> str:
+    return "".join(
+        [
+            unicodedata.normalize("NFD", a)[0].lower()
+            for a in x
+            if a.isalpha() or a in punct + ["_"]
+        ]
+    )
+
+
+async def TEMP_migrate_to_token2_part_2():
+    result = await db.fetch_all(
+        """
+        SELECT id, 
+               name,
+               series_type,
+               xml_original, 
+               xml_papygreek,
+               v1,
+               orig_status,
+               reg_status
+          FROM `text`
+        """
+    )
+    for text in tqdm(result["result"]):
+        if text["v1"]:
+            continue
+        if not (text["orig_status"] or text["reg_status"]):
+            tokenizer = tokenize_string(text["xml_papygreek"])
+            new_tokens = tokenizer["tokens"]()["tokens"]
+            for new_t in new_tokens:
+                res = await tokens.insert_token(new_t, text["id"])
+                if not res["ok"]:
+                    print("Could not insert token.")
+                    print(res)
+                    print(new_t)
+                    exit()
+
+                if new_t["var"]:
+                    for var in new_t["var"]:
+                        rdg_result = await tokens.insert_token_rdg(var, res["result"])
+                        if not rdg_result["ok"]:
+                            print("Could not insert var.")
+                            print(rdg_result)
+                            print(var)
+                            exit()
+
+
+async def TEMP_migrate_to_token2():
+    result = await db.fetch_all(
+        """
+        SELECT id, 
+               name,
+               series_type,
+               xml_original, 
+               xml_papygreek,
+               v1,
+               orig_status,
+               reg_status
+          FROM `text`
+        """
+    )
+
+    for text in tqdm(result["result"]):
+        if text["v1"]:
+            continue
+        if text["orig_status"] or text["reg_status"]:
+            tokenizer = tokenize_string(text["xml_papygreek"])
+            new_tokens = tokenizer["tokens"]()["tokens"]
+
+            old_sentences = await tokens.get_old_text_sentences(text["id"])
+            new_sentences = tokens.group_tokens_to_sentences(new_tokens)
+
+            old_sentences_artificials = []
+            old_sentences_without_artificials = []
+
+            for s in old_sentences:
+                old_sentences_without_artificials.append(
+                    [x for x in s if not tokens.is_artificial(x)]
+                )
+                old_sentences_artificials.append(
+                    [x for x in s if tokens.is_artificial(x)]
+                )
+            s_index = 0
+
+            for new_sentence, old_sentence in zip_longest(
+                new_sentences, old_sentences_without_artificials, fillvalue=[]
+            ):
+                for new_t, old_t in zip_longest(
+                    new_sentence, old_sentence, fillvalue={}
+                ):
+                    if not (
+                        new_t["n"] == old_t["n"]
+                        and new_t["sentence_n"] == old_t["sentence_n"]
+                    ):
+                        print("NOT MATCH")
+                        exit()
+                    else:
+                        new_t["reg_postag"] = old_t["reg_postag"]
+                        new_t["reg_lemma"] = old_t["reg_lemma"]
+                        new_t["reg_lemma_plain"] = plain(old_t["reg_lemma"] or "")
+                        new_t["reg_relation"] = old_t["reg_relation"]
+                        new_t["reg_head"] = old_t["reg_head"]
+                        new_t["reg_data"] = new_t["reg_data"]
+                        new_t["orig_postag"] = old_t["orig_postag"]
+                        new_t["orig_lemma"] = old_t["orig_lemma"]
+                        new_t["orig_lemma_plain"] = plain(old_t["orig_lemma"] or "")
+                        new_t["orig_relation"] = old_t["orig_relation"]
+                        new_t["orig_head"] = old_t["orig_head"]
+                        new_t["orig_data"] = new_t["orig_data"] or ""
+
+                        res = await tokens.insert_token(new_t, text["id"])
+
+                        if not res["ok"]:
+                            print("NOT INSERTED token, PRoblem")
+                            print(res)
+                            print(new_t)
+                            exit()
+
+                        if new_t["var"]:
+                            for var in new_t["var"]:
+                                rdg_result = await tokens.insert_token_rdg(
+                                    var, res["result"]
+                                )
+                                if not rdg_result["ok"]:
+                                    print("Could not insert var.")
+                                    print(rdg_result)
+                                    print(var)
+                                    exit()
+
+                for artificial in old_sentences_artificials[s_index]:
+                    artificial_template = {
+                        "orig_form": artificial["orig_form"],
+                        "reg_form": artificial["reg_form"],
+                        "n": artificial["n"],
+                        "sentence_n": s_index + 1,
+                        "artificial": artificial["artificial"],
+                        "insertion_id": artificial["insertion_id"],
+                        "orig_lemma": artificial["orig_lemma"],
+                        "orig_lemma_plain": plain(artificial["orig_lemma"] or ""),
+                        "orig_postag": artificial["orig_postag"],
+                        "orig_relation": artificial["orig_relation"],
+                        "orig_head": artificial["orig_head"],
+                        "reg_lemma": artificial["reg_lemma"],
+                        "reg_lemma_plain": plain(artificial["reg_lemma"] or ""),
+                        "reg_postag": artificial["reg_postag"],
+                        "reg_relation": artificial["reg_relation"],
+                        "reg_head": artificial["reg_head"],
+                    }
+
+                    res = await tokens.insert_token(artificial_template, text["id"])
+                    if not res["ok"]:
+                        print("Could not insert artificial.")
+                        print(res)
+                        print(artificial_template)
+                        exit()
+
+                s_index += 1
 
 
 async def tokens_have_changed(text_id, new_tokens):
@@ -19,6 +183,10 @@ async def tokens_have_changed(text_id, new_tokens):
 
 
 async def same_sentences(old_sentences, new_sentences):
+    import re
+
+    remove_ud = lambda x: re.sub("̣", "", x)
+
     old_sentences_without_artificials = []
     for s in old_sentences:
         old_sentences_without_artificials.append(
@@ -28,11 +196,156 @@ async def same_sentences(old_sentences, new_sentences):
         new_sentences, old_sentences_without_artificials, fillvalue=[]
     ):
         for new_t, old_t in zip_longest(new_sentence, old_sentence, fillvalue={}):
-            orig_new = new_t.get(f"orig_form", "")
-            orig_old = old_t.get(f"orig_form", "[none]")
-            reg_new = new_t.get(f"reg_form", "")
-            reg_old = old_t.get(f"reg_form", "[none]")
+            orig_new = remove_ud(
+                new_t.get(f"orig_form", "")
+                .replace("․", ".")
+                .replace("(?)", "?")
+                .replace("?", "")
+                .replace("[", "")
+                .replace("]", "")
+                .replace("<", "")
+                .replace(">", "")
+                .replace("¯", "")
+            )
+            orig_old = remove_ud(
+                old_t.get(f"orig_form", "[none]")
+                .replace("․", ".")
+                .replace("(?)", "?")
+                .replace("?", "")
+                .replace("‹", "<")
+                .replace("›", ">")
+                .replace("[", "")
+                .replace("]", "")
+                .replace("<", "")
+                .replace(">", "")
+                .replace("¯", "")
+            )
+            reg_new = remove_ud(
+                new_t.get(f"reg_form", "")
+                .replace("․", ".")
+                .replace("(?)", "?")
+                .replace("?", "")
+                .replace("[", "")
+                .replace("]", "")
+                .replace("<", "")
+                .replace(">", "")
+                .replace("¯", "")
+            )
+            reg_old = remove_ud(
+                old_t.get(f"reg_form", "[none]")
+                .replace("․", ".")
+                .replace("(?)", "?")
+                .replace("?", "")
+                .replace("‹", "<")
+                .replace("›", ">")
+                .replace("[", "")
+                .replace("]", "")
+                .replace("<", "")
+                .replace(">", "")
+                .replace("¯", "")
+            )
+
+            hand_new = new_t.get("hand")
+            hand_old = old_t.get("hand")
+            aow_new = new_t.get("aow_n")
+            aow_old = old_t.get("aow_n")
+            line_new = new_t.get("line")
+            line_old = old_t.get("line", "").replace("⧛", "")
+
+            if "note" in orig_new:
+                orig_new = "note"
+            if "note" in reg_new:
+                reg_new = "note"
+            if "note" in orig_old:
+                orig_old = "note"
+            if "note" in reg_old:
+                reg_old = "note"
+
+            if "figure" in orig_new:
+                orig_new = "figure"
+            if "figure" in reg_new:
+                reg_new = "figure"
+            if "figure" in orig_old:
+                orig_old = "figure"
+            if "figure" in reg_old:
+                reg_old = "figure"
+
+            if orig_new == "[$]":
+                orig_new = "$"
+            if reg_new == "[$]":
+                reg_new = "$"
+
+            if orig_new == "(|$|)" and orig_old == "$":
+                orig_old = orig_new
+
+            if reg_old == "" and reg_new == "ἀ|γὼ":
+                reg_old = "ἀ|γὼ"
+
+            if orig_new == "[_.3]" and orig_old == "[]_.3":
+                orig_old = "[_.3]"
+                reg_old = "[_.3]"
+
+            if (
+                orig_new == "[α̣̣]"
+                and orig_old == "[]α̣"
+                and reg_new == "[α̣̣]"
+                and reg_old == "[]α̣"
+            ):
+                orig_old = orig_new
+                reg_old = reg_new
+
+            if orig_new == "dudec_." and orig_old == "$":
+                orig_old = orig_new
+
+            if orig_new == "$" and orig_old == "dudec_.":
+                orig_old = orig_new
+
+            if orig_new == "ἐ̣ν" and orig_old == "ἐν":
+                orig_old = orig_new
+                reg_old = reg_new
+
+            if orig_new == "[_.1]" and orig_old == "[]_.1":
+                orig_old = orig_new
+                reg_old = reg_new
+
+            if orig_new == "κὰἀγὼ" and orig_old == "$":
+                orig_old = orig_new
+
+            if orig_new == "$" and orig_old == "κὰἀγὼ":
+                orig_old = orig_new
+
             if orig_new != orig_old or reg_new != reg_old:
+                print(
+                    f"orig_new: {orig_new}, orig_old: {orig_old}, reg_new: {reg_new}, reg_old: {reg_old}"
+                )
+                print("NEW SENTENCE")
+                pprint(new_sentence)
+                print()
+                print("OLD SENTENCE")
+                pprint(old_sentence)
+                return 0
+
+            if hand_new != hand_old:
+                print(f"hand_new: {hand_new}, hand_old: {hand_old}")
+                print("different hands!")
+                return 0
+
+            if line_new != line_old:
+                print(f"line_new: {line_new}, line_old: {line_old}")
+                print("different lines!")
+                # return 0
+
+            if aow_new != aow_old:
+                print(f"aow_new: {aow_new}, aow_old: {aow_old}")
+                print("different aows!")
+                return 0
+
+            if new_t.get("n", "") != old_t.get("n", ""):
+                print("different ns")
+                return 0
+
+            if new_t.get("sentence_n", "") != old_t.get("sentence_n", ""):
+                print("different sentence_ns")
                 return 0
 
     return 1
@@ -134,13 +447,28 @@ async def check_tokenizer_for_annotated_texts():
         """
     )
 
+    result_new = await db.fetch_all(
+        """
+        SELECT id, 
+               name,
+               series_type,
+               xml_original, 
+               xml_papygreek,
+               v1
+          FROM `text`
+        """
+    )
+
     db_texts = result["result"]
 
-    for db_text in db_texts:
+    print(len(db_texts))
+
+    for db_text in tqdm(db_texts):
         if db_text["v1"]:
             continue
 
         tokenizer = tokenize_string(db_text["xml_papygreek"])
+        print(db_text["name"], db_text["id"])
         xml_papygreek_tokens = tokenizer["tokens"]()["tokens"]
         changed_tokens = await tokens_have_changed(db_text["id"], xml_papygreek_tokens)
         if changed_tokens:
@@ -437,6 +765,15 @@ async def cli(flags):
 
     if "check_tokenizer_for_annotated_texts" in flags:
         result = await check_tokenizer_for_annotated_texts()
+        print(result)
+        exit()
+
+    if "TEMP_migrate_to_token2" in flags:
+        result = await TEMP_migrate_to_token2()
+        print(result)
+        exit()
+    if "TEMP_migrate_to_token2_part_2" in flags:
+        result = await TEMP_migrate_to_token2_part_2()
         print(result)
         exit()
 

@@ -173,6 +173,115 @@ CREATE TABLE IF NOT EXISTS `token_rdg` (
         ON DELETE CASCADE
 );
 
+
+CREATE TABLE IF NOT EXISTS `token_2` (
+    `id`            INT unsigned NOT NULL AUTO_INCREMENT,
+    `text_id`       INT unsigned NOT NULL,
+    `n`             INT unsigned NOT NULL,
+    `sentence_n`    INT unsigned NOT NULL,
+    `line`          VARCHAR(80),
+    `line_rend`     VARCHAR(80),
+    `hand`          VARCHAR(80),
+    `textpart`      TEXT,
+    `aow_n`         SMALLINT unsigned,
+
+    `orig_form`     VARCHAR(512),
+    `orig_form_unformatted`     VARCHAR(512),
+    `orig_plain`    VARCHAR(512),
+    `orig_plain_transcript`    VARCHAR(512),
+    `orig_num`      VARCHAR(512),
+    `orig_num_rend` VARCHAR(512),
+    `orig_lang`     VARCHAR(512),
+    `orig_variation_path`     TEXT,
+    `orig_lemma`    VARCHAR(80),
+    `orig_lemma_plain`    VARCHAR(80),
+    `orig_postag`   VARCHAR(80),
+    `orig_relation` VARCHAR(80),
+    `orig_head`     VARCHAR(80),
+    `orig_data`     TEXT,
+
+    `reg_form`     VARCHAR(512),
+    `reg_form_unformatted`     VARCHAR(512),
+    `reg_plain`    VARCHAR(512),
+    `reg_plain_transcript`    VARCHAR(512),
+    `reg_num`      VARCHAR(512),
+    `reg_num_rend` VARCHAR(512),
+    `reg_lang`     VARCHAR(512),
+    `reg_variation_path`     TEXT,
+    `reg_lemma`    VARCHAR(80),
+    `reg_lemma_plain`    VARCHAR(80),
+    `reg_postag`   VARCHAR(80),
+    `reg_relation` VARCHAR(80),
+    `reg_head`     VARCHAR(80),
+    `reg_data`     TEXT,
+
+    `insertion_id` VARCHAR(80),
+    `artificial`   VARCHAR(80),
+    `pending_deletion`   SMALLINT unsigned,
+    --
+    PRIMARY KEY (`id`),
+    KEY (`text_id`),
+    KEY (`n`),
+    KEY (`sentence_n`),
+    KEY (`hand`),
+    KEY (`aow_n`),
+
+    KEY (`orig_form`(80)),
+    KEY (`orig_plain`(80)),
+    KEY (`orig_plain_transcript`(80)),
+    KEY (`orig_lang`(80)),
+    KEY (`orig_lemma`(80)),
+    KEY (`orig_lemma_plain`(80)),
+    KEY (`orig_postag`(80)),
+    KEY (`orig_relation`(80)),
+    KEY (`orig_head`(80)),
+    KEY (`orig_variation_path`(80)),
+
+    KEY (`reg_form`(80)),
+    KEY (`reg_plain`(80)),
+    KEY (`reg_plain_transcript`(80)),
+    KEY (`reg_lang`(80)),
+    KEY (`reg_lemma`(80)),
+    KEY (`reg_lemma_plain`(80)),
+    KEY (`reg_postag`(80)),
+    KEY (`reg_relation`(80)),
+    KEY (`reg_head`(80)),
+    KEY (`reg_variation_path`(80)),
+
+    KEY (`insertion_id`(80)),
+    KEY (`artificial`(80)),
+
+    KEY (`pending_deletion`),
+
+    UNIQUE (`n`, `sentence_n`, `text_id`, `pending_deletion`),
+    FOREIGN KEY (`text_id`) REFERENCES `text` (`id`)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS `token_rdg_2` (
+    `id`            INT unsigned NOT NULL AUTO_INCREMENT,
+    `token_id`      INT unsigned NOT NULL,
+    `form`     VARCHAR(512),
+    `form_unformatted`     VARCHAR(512),
+    `plain`    VARCHAR(512),
+    `plain_transcript`    VARCHAR(512),
+    `num`      VARCHAR(512),
+    `num_rend` VARCHAR(512),
+    `lang`     VARCHAR(512),
+    `variation_path`     TEXT,
+    `data`     TEXT,
+    --
+    PRIMARY KEY (`id`),
+    KEY (`form`(80)),
+    KEY (`plain`(80)),
+    KEY (`plain_transcript`(80)),
+    KEY (`lang`(80)),
+    KEY (`variation_path`(80)),
+    KEY (`token_id`),
+    FOREIGN KEY (`token_id`) REFERENCES `token` (`id`)
+        ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS `token_v1` (
     `id`            INT unsigned NOT NULL AUTO_INCREMENT,
     `text_id`       INT unsigned NOT NULL,

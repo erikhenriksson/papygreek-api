@@ -35,7 +35,6 @@ async def update_annotation(data):
         "head",
         "n",
     ]
-    print(data["data"].keys())
     assert all(elem in valid_keys for elem in data["data"].keys())
     update_data = {}
 
@@ -118,7 +117,9 @@ async def edit_sentence_annotation(request):
             """
             DELETE FROM token 
              WHERE id = %s 
-               AND artificial = 'elliptic'
+               AND (artificial = 'elliptic' 
+                OR orig_form IN ('[0]', '[1]', '[2]', '[3]', '[4]', '[5]', '[6]', '[7]', '[8]', '[9]') 
+                OR reg_form IN ('[0]', '[1]', '[2]', '[3]', '[4]', '[5]', '[6]', '[7]', '[8]', '[9]'))
             """,
             (token_id,),
         )

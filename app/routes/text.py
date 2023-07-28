@@ -3,13 +3,31 @@ from starlette.authentication import requires
 from starlette.responses import PlainTextResponse
 from ..response import JSONResponse
 
+import json
+
 from . import tokens, comments, xml
 from ..config import db
 from ..textmanager import variations, closures
+from papygreektokenizer import format_token_html
 
 
 async def get_text_tokens(request):
     data = await tokens.get_tokens_by_text(request.path_params["id"])
+    return JSONResponse(data)
+
+
+async def get_text_tokens_html(request):
+    data = await tokens.get_tokens_by_text(request.path_params["id"])
+    print(data)
+    for token in data["result"]:
+        orig_elements = json.loads(token["orig_data"] or "{}")
+        reg_elements = json.loads(token["reg_data"] or "{}")
+        token["orig_html"] = format_token_html(
+            token["orig_form_unformatted"] or "", orig_elements
+        )
+        token["reg_html"] = format_token_html(
+            token["reg_form_unformatted"] or "", reg_elements
+        )
     return JSONResponse(data)
 
 
@@ -318,6 +336,7 @@ async def get_backup(request):
 routes = [
     Route("/{id:int}", get_text),
     Route("/{id:int}/tokens", get_text_tokens),
+    Route("/{id:int}/tokens_html", get_text_tokens_html),
     Route("/{id:int}/workflow", get_text_workflow),
     Route("/{id:int}/update_status", update_text_status, methods=["PATCH", "POST"]),
     Route("/{id:int}/xml", get_text_xml),

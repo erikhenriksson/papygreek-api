@@ -1,7 +1,8 @@
 from itertools import groupby
+import json
 from itertools import zip_longest
 from difflib import SequenceMatcher
-from epidoctokenizer import tokenize_string
+from papygreektokenizer import tokenize_string
 
 from ..config import db
 
@@ -18,71 +19,80 @@ async def insert_token(token, text_id):
                hand,
                textpart,
                aow_n,
-               artificial,
-               insertion_id,
                orig_form,
+               orig_form_unformatted,
                orig_plain,
-               orig_flag,
-               orig_app_type,
+               orig_plain_transcript,
                orig_num,
                orig_num_rend,
                orig_lang,
-               orig_info,
-               orig_postag,
+               orig_variation_path,
                orig_lemma,
+               orig_lemma_plain,
+               orig_postag,
                orig_relation,
                orig_head,
+               orig_data,
                reg_form,
+               reg_form_unformatted,
                reg_plain,
-               reg_flag,
-               reg_app_type,
+               reg_plain_transcript,
                reg_num,
                reg_num_rend,
                reg_lang,
-               reg_info,
-               reg_postag,
+               reg_variation_path,
                reg_lemma,
+               reg_lemma_plain,
+               reg_postag,
                reg_relation,
                reg_head,
+               reg_data,
+               artificial,
+               insertion_id,
                pending_deletion)
         VALUES
-               (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0);
+               (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
         """,
         (
             text_id,
             token["n"],
             token["sentence_n"],
-            token["line"],
-            token["line_rend"],
-            token["hand"],
-            token["textpart"],
-            token["aow_n"],
-            token["artificial"],
-            token["insertion_id"],
-            token["orig_form"],
-            token["orig_plain"],
-            token["orig_flag"],
-            token["orig_app_type"],
-            token["orig_num"],
-            token["orig_num_rend"],
-            token["orig_lang"],
-            token["orig_info"],
-            token["orig_postag"],
-            token["orig_lemma"],
-            token["orig_relation"],
-            token["orig_head"],
-            token["reg_form"],
-            token["reg_plain"],
-            token["reg_flag"],
-            token["reg_app_type"],
-            token["reg_num"],
-            token["reg_num_rend"],
-            token["reg_lang"],
-            token["reg_info"],
-            token["reg_postag"],
-            token["reg_lemma"],
-            token["reg_relation"],
-            token["reg_head"],
+            token.get("line", None),
+            token.get("line_rend", None),
+            token.get("hand", None),
+            token.get("textpart", None),
+            token.get("aow_n", None),
+            token.get("orig_form", None),
+            token.get("orig_form_unformatted", None),
+            token.get("orig_plain", None),
+            token.get("orig_plain_transcript", None),
+            token.get("orig_num", None),
+            token.get("orig_num_rend", None),
+            token.get("orig_lang", None),
+            token.get("orig_variation_path", None),
+            token.get("orig_lemma", None),
+            token.get("orig_lemma_plain", None),
+            token.get("orig_postag", None),
+            token.get("orig_relation", None),
+            token.get("orig_head", None),
+            json.dumps(token.get("orig_data", "")),
+            token.get("reg_form", None),
+            token.get("reg_form_unformatted", None),
+            token.get("reg_plain", None),
+            token.get("reg_plain_transcript", None),
+            token.get("reg_num", None),
+            token.get("reg_num_rend", None),
+            token.get("reg_lang", None),
+            token.get("reg_variation_path", None),
+            token.get("reg_lemma", None),
+            token.get("reg_lemma_plain", None),
+            token.get("reg_postag", None),
+            token.get("reg_relation", None),
+            token.get("reg_head", None),
+            json.dumps(token.get("reg_data", "")),
+            token.get("artificial", None),
+            token.get("insertion_id", None),
+            0,
         ),
     )
 
@@ -90,28 +100,30 @@ async def insert_token(token, text_id):
 async def insert_token_rdg(var, token_id):
     return await db.execute(
         """
-        INSERT INTO token_rdg 
+        INSERT INTO token_rdg
                (token_id,
                form,
+               form_unformatted,
                plain,
-               flag,
-               app_type,
+               plain_transcript,
                num,
                num_rend,
                lang,
-               info)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+               variation_path,
+               data)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
         """,
         (
             token_id,
-            var["form"],
-            var["plain"],
-            var["flag"],
-            var["app_type"],
-            var["num"],
-            var["num_rend"],
-            var["lang"],
-            var["info"],
+            var.get("var_form", None),
+            var.get("var_form_unformatted", None),
+            var.get("var_plain", None),
+            var.get("var_plain_transcript", None),
+            var.get("var_num", None),
+            var.get("var_num_rend", None),
+            var.get("var_lang", None),
+            var.get("var_variation_path", None),
+            json.dumps(var.get("var_data", "")),
         ),
     )
 
@@ -122,8 +134,9 @@ async def insert_tokens(new_tokens, text_id):
         if not result["ok"]:
             return result
         token_id = result["result"]
-        if token["vars"]:
-            for var in token["vars"]:
+        if token["var"]:
+            for var in token["var"]:
+                var["var_data"] = json.dumps(var["var_data"])
                 result = await insert_token_rdg(var, token_id)
                 if not result["ok"]:
                     return result
@@ -136,6 +149,20 @@ async def get_tokens_by_text(text_id):
         """
         SELECT *
           FROM token
+         WHERE text_id = %s
+         ORDER BY sentence_n, n
+        """,
+        (text_id,),
+    )
+
+    return result
+
+
+async def get_old_tokens_by_text(text_id):
+    result = await db.fetch_all(
+        """
+        SELECT *
+          FROM token_old
          WHERE text_id = %s
          ORDER BY sentence_n, n
         """,
@@ -224,7 +251,14 @@ async def get_text_sentences(text_id):
     return group_tokens_to_sentences(old_tokens)
 
 
+async def get_old_text_sentences(text_id):
+    result = await get_old_tokens_by_text(text_id)
+    old_tokens = result["result"]
+    return group_tokens_to_sentences(old_tokens)
+
+
 def xml_to_sentences(xml):
+    # Convert XML to sentences. Used by text.py routes
     tokenizer = tokenize_string(xml)
     new_tokens = tokenizer["tokens"]()["tokens"]
     return group_tokens_to_sentences(new_tokens)
@@ -233,8 +267,10 @@ def xml_to_sentences(xml):
 def is_artificial(x):
     return (
         (x.get("artificial", "") or "").strip()
-        or x.get("orig_form", "") == "[0]"
-        or x.get("reg_form") == "[0]"
+        or x.get("orig_form", "")
+        in ["[0]", "[1]", "[2]", "[3]", "[4]", "[5]", "[6]", "[7]", "[8]", "[9]"]
+        or x.get("reg_form")
+        == ["[0]", "[1]", "[2]", "[3]", "[4]", "[5]", "[6]", "[7]", "[8]", "[9]"]
     )
 
 
