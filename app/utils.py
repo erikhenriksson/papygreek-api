@@ -1,8 +1,16 @@
+from .config import DEBUG
+
+
 def is_int(test):
     test = str(test)
     if len(test) != 0 and test[0] == "-":
         test = test[1:]
     return test.isnumeric()
+
+
+def debug(s):
+    if DEBUG:
+        print(s)
 
 
 def cols(table):

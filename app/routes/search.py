@@ -7,15 +7,10 @@ from unicodedata import normalize
 from starlette.authentication import requires
 from starlette.routing import Route
 
-from ..config import db, DEBUG
-from ..utils import cols, is_int
+from ..config import db
+from ..utils import cols, is_int, debug
 from ..response import JSONResponse
 from . import analyses
-
-
-def debug(s):
-    if DEBUG:
-        print(s)
 
 
 def get_meta_filters(q):
@@ -127,30 +122,30 @@ async def search(request):
         def get_variation_query(var_query_string):
             ret = {
                 "operation": "0",
-                "p_orig_bef": [],
-                "p_orig": [],
-                "p_reg": [],
-                "p_orig_aft": [],
+                "orig_bef": [],
+                "orig": [],
+                "reg": [],
+                "orig_aft": [],
             }
 
             bef_split = var_query_string.split(">")
-            ret["p_orig_bef"] = bef_split[0] if len(bef_split) >= 2 else []
+            ret["orig_bef"] = bef_split[0] if len(bef_split) >= 2 else []
             af_split = bef_split[-1].split("<")
-            ret["p_orig_aft"] = af_split[1] if len(af_split) >= 2 else []
+            ret["orig_aft"] = af_split[1] if len(af_split) >= 2 else []
             center = af_split[0]
 
             if ("+" in center and "-" not in center) or (
                 "+" not in center and "-" not in center
             ):
                 ret["operation"] = "1"
-                ret["p_reg"] = center.replace("+", "")
+                ret["reg"] = center.replace("+", "")
             elif "-" in center and "+" not in center:
                 ret["operation"] = "-1"
-                ret["p_orig"] = center.replace("-", "")
+                ret["orig"] = center.replace("-", "")
             elif "-" in center and "+" in center:
                 ret["operation"] = "2"
-                ret["p_orig"] = center.split("-")[1].split("+")[0]
-                ret["p_reg"] = center.split("+")[1].split("-")[0]
+                ret["orig"] = center.split("-")[1].split("+")[0]
+                ret["reg"] = center.split("+")[1].split("-")[0]
             assert all(k in cols("variation") for k in ret.keys())
             return {k: v for k, v in ret.items() if v}
 
@@ -171,14 +166,11 @@ async def search(request):
                 where = "INNER JOIN text ON token.text_id = text.ID AND text.orig_status=3 AND text.reg_status=3"
             else:
                 where = "1=1"
-            return (
-                where,
-                values,
-                "",
-            )
+            return (where, values, "", "")
 
         where = []
         variation_join = ""
+        rdg_join = ""
         for col, val in query.items():
             operator = "REGEXP" if len(col.split("regex:")) == 2 else "LIKE"
             col = col.split("regex:")[-1]
@@ -195,6 +187,10 @@ async def search(request):
                 )
                 q = f"({q})"
                 variation_join = "1"
+            elif col == "rdg":
+                values[f"{prefix}_{col}"] = val
+                q = f" token_rdg.plain = %({prefix}_{col})s "
+                rdg_join = "1"
             else:
                 values[f"{prefix}_{col}"] = val
                 q = f"{validate_token_cols(col, layer)} {operator} %({prefix}_{col})s"
@@ -202,7 +198,7 @@ async def search(request):
             where.append(q)
         where = " AND ".join(where)
 
-        return where, values, variation_join
+        return where, values, variation_join, rdg_join
 
     async def tree_query(root, leaves, root_query=0):
         # Query a tree
@@ -232,18 +228,24 @@ async def search(request):
         wheres = []
         values = {}
         leafs_variation_join = []
+        leafs_rdg_join = []
 
         for leaf_i, leaf in enumerate(leaves):
-            where, values, variation_join = get_leaf_query(leaf, values, str(leaf_i))
+            where, values, variation_join, rdg_join = get_leaf_query(
+                leaf, values, str(leaf_i)
+            )
 
             leafs_variation_join.append(variation_join)
+            leafs_rdg_join.append(rdg_join)
             wheres.append(where)
 
         if root_query:
-            root, values, root_variation_join = get_leaf_query(root, values)
+            root, values, root_variation_join, root_rdg_join = get_leaf_query(
+                root, values
+            )
             if not root.startswith("INNER"):
                 root = f"WHERE ({root})"
-            ancestor_filter = f'SELECT token.id FROM token {"JOIN variation ON token.id=variation.token_id" if root_variation_join else ""} {root}'
+            ancestor_filter = f'SELECT token.id FROM token {"JOIN variation ON token.id=variation.token_id" if root_variation_join else ""} {"JOIN token_rdg ON token_rdg.token_id=token.id" if root_rdg_join else ""} {root}'
         else:
             ancestor_filter = ",".join(root)
 
@@ -252,7 +254,7 @@ async def search(request):
         )
         descendant_joins = "\n".join(
             [
-                f'join token_closure L{i} on R.ancestor = L{i}.ancestor AND L{i}.depth {depths[i]} AND L{i}.descendant IN (SELECT token.id from token {"JOIN variation ON token.id=variation.token_id" if leafs_variation_join[i] else ""} WHERE ({x}))'
+                f'join token_closure L{i} on R.ancestor = L{i}.ancestor AND L{i}.depth {depths[i]} AND L{i}.descendant IN (SELECT token.id from token {"JOIN variation ON token.id=variation.token_id" if leafs_variation_join[i] else ""} {"JOIN token_rdg ON token_rdg.token_id=token.id" if leafs_rdg_join[i] else ""} WHERE ({x}))'
                 for i, x in enumerate(wheres)
             ]
         )
@@ -328,7 +330,9 @@ async def search(request):
                 debug("traverse: no children left")
         return ancestor_and_descendant_ids
 
-    def get_final_sql(variation_join, where, meta_filters, additional_filters):
+    def get_final_sql(
+        variation_join, rdg_join, where, meta_filters, additional_filters
+    ):
         if variation_join:
             variation_join = "INNER JOIN variation ON variation.token_id = token.id"
         return f"""
@@ -355,9 +359,11 @@ async def search(request):
                 token.reg_relation, 
                 token.reg_head, 
                 artificial,
-                text.{layer}_status  
+                text.{layer}_status,
+                GROUP_CONCAT(token_rdg.form) AS rdgs
             FROM 
                 token 
+            INNER JOIN token_rdg ON token_rdg.token_id = token.id
             {variation_join}
             JOIN 
                 `text` 
@@ -366,6 +372,7 @@ async def search(request):
             WHERE {where}
             {("AND " + " AND ".join(meta_filters)) if meta_filters else ""}
             {additional_filters}
+            GROUP BY token.id
         """
 
     try:
@@ -373,7 +380,9 @@ async def search(request):
         query = query_to_dict([q["q"]])[0]
         # Plain search (non-recursive)
         if not "children" in query:
-            where, values, variation_join = get_leaf_query(query["q"], values, "flat")
+            where, values, variation_join, rdg_join = get_leaf_query(
+                query["q"], values, "flat"
+            )
 
         # Tree search (recursive)
         else:
@@ -387,8 +396,11 @@ async def search(request):
                 return JSONResponse({"ok": True, "result": []})
             where = f"token.id IN ({','.join([str(x[0]) for x in result])})"
             variation_join = ""
+            rdg_join = ""
 
-        sql = get_final_sql(variation_join, where, meta_filters, additional_filters)
+        sql = get_final_sql(
+            variation_join, rdg_join, where, meta_filters, additional_filters
+        )
         debug(f"final_sql: {sql}")
         result = await db.fetch_all(sql, values)
 
@@ -398,7 +410,6 @@ async def search(request):
 
             date_frequencies = analyses.get_text_date_frequencies(result["result"])
 
-            print(date_frequencies)
             return JSONResponse(
                 {
                     "ok": True,
@@ -563,8 +574,6 @@ async def get_sentence_tree_json(text_id, sentence_n, layer):
         """,
         {"text_id": text_id, "sentence_n": sentence_n},
     )
-
-    print(data)
 
     return data
 

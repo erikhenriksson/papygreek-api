@@ -1,22 +1,9 @@
 from collections import namedtuple
-import re
-import unicodedata
-
 from tqdm import tqdm
 
 from ..config import db
 
 Match = namedtuple("Match", "a b size")
-plain = lambda x: "".join(
-    [unicodedata.normalize("NFD", a)[0].lower() for a in x if a.isalpha() or a in ["_"]]
-)
-
-
-def plain_and_semiplain(t):
-    t = re.sub(r"\$(?=.+)", "", t)
-    t = re.sub(r"\*(.*?)\*", "", t)
-    t = re.sub(r"(｢[^｣]+｣)+", "_", t)
-    return plain(t), t
 
 
 def find_longest_match(orig, reg_index, orig_start, orig_end, reg_start, reg_end):
@@ -105,7 +92,7 @@ def get_matching_blocks(orig, reg, reg_index):
     return list(map(Match._make, non_adjacent))
 
 
-def get_changes(orig, reg, orig_full, reg_full):
+def get_changes(orig, reg):
     """Get the change deltas"""
     # Init vars
     orig_start = 0
@@ -134,18 +121,12 @@ def get_changes(orig, reg, orig_full, reg_full):
             answer.append(
                 {
                     "operation": tag,
-                    "orig": orig_full[orig_start:orig_end],
-                    "reg": reg_full[reg_start:reg_end],
-                    "orig_bef": orig_full[:orig_start],
-                    "orig_aft": orig_full[orig_end:],
-                    "reg_bef": reg_full[:reg_start],
-                    "reg_aft": reg_full[reg_end:],
-                    "p_orig": orig[orig_start:orig_end],
-                    "p_reg": reg[reg_start:reg_end],
-                    "p_orig_bef": orig[:orig_start],
-                    "p_orig_aft": orig[orig_end:],
-                    "p_reg_bef": reg[:reg_start],
-                    "p_reg_aft": reg[reg_end:],
+                    "orig": orig[orig_start:orig_end],
+                    "reg": reg[reg_start:reg_end],
+                    "orig_bef": orig[:orig_start],
+                    "orig_aft": orig[orig_end:],
+                    "reg_bef": reg[:reg_start],
+                    "reg_aft": reg[reg_end:],
                 }
             )
 
@@ -155,52 +136,50 @@ def get_changes(orig, reg, orig_full, reg_full):
             answer.append(
                 {
                     "operation": 0,
-                    "orig": orig_full[orig_end:orig_start],
-                    "reg": "",
-                    "orig_bef": orig_full[:orig_end],
-                    "orig_aft": orig_full[orig_start:],
-                    "reg_bef": reg_full[:reg_end],
-                    "reg_aft": reg_full[reg_start:],
-                    "p_orig": orig[orig_end:orig_start],
-                    "p_reg": "",
-                    "p_orig_bef": orig[:orig_end],
-                    "p_orig_aft": orig[orig_start:],
-                    "p_reg_bef": reg[:reg_end],
-                    "p_reg_aft": reg[reg_start:],
+                    "orig": orig[orig_end:orig_start],
+                    "reg": reg[orig_end:orig_start],
+                    "orig_bef": orig[:orig_end],
+                    "orig_aft": orig[orig_start:],
+                    "reg_bef": reg[:reg_end],
+                    "reg_aft": reg[reg_start:],
                 }
             )
     return answer
 
 
-async def run_token(t):
-    orig_plain, orig_full = plain_and_semiplain(t["orig_form"])
-    reg_plain, reg_full = plain_and_semiplain(t["reg_form"])
-    if reg_plain.replace("_", "") or orig_plain.replace("_", ""):
-        changes = get_changes(orig_plain, reg_plain, orig_full, reg_full)
-
+async def run_token(t, rdg=0):
+    orig = t["orig_plain_transcript"] or ""
+    reg = t["reg_plain"] or ""
+    if orig.replace("_", "") or reg.replace("_", ""):
+        changes = get_changes(orig, reg)
+        regularization = (
+            1
+            if (t["orig_variation_path"] or "").startswith("choice/orig")
+            or (t["reg_variation_path"] or "").startswith("choice/reg")
+            else 0
+        )
         for change in changes:
             if change["operation"] != 0:
                 change["token_id"] = t["id"]
                 change["text_id"] = t["text_id"]
+                change["regularization"] = regularization
+                change["rdg"] = rdg
                 inserted = await db.execute(
                     """
                     INSERT INTO variation 
                            (token_id,	
                            text_id,
                            operation,	
+                           regularization,	
+                           rdg,	
                            orig,	
                            reg,	
                            reg_bef,	
                            reg_aft,
                            orig_bef,	
-                           orig_aft,	
-                           p_orig,	
-                           p_reg,	
-                           p_reg_bef,	
-                           p_reg_aft,	
-                           p_orig_bef,	
-                           p_orig_aft)
-                    VALUES (%(token_id)s, %(text_id)s, %(operation)s, %(orig)s, %(reg)s, %(reg_bef)s, %(reg_aft)s, %(orig_bef)s, %(orig_aft)s, %(p_orig)s, %(p_reg)s, %(p_reg_bef)s, %(p_reg_aft)s, %(p_orig_bef)s, %(p_orig_aft)s)
+                           orig_aft)
+                    VALUES (%(token_id)s, %(text_id)s, %(operation)s, %(regularization)s, %(rdg)s,
+                    %(orig)s, %(reg)s, %(reg_bef)s, %(reg_aft)s, %(orig_bef)s, %(orig_aft)s)
                     """,
                     (change),
                 )
@@ -223,10 +202,23 @@ async def update_text_variations(text_id):
     if not deleted["ok"]:
         return deleted
 
+    tokens_rdg = await db.fetch_all(
+        """
+        SELECT * 
+          FROM token_rdg 
+         WHERE text_id = %s
+        """,
+        (text_id,),
+    )
+    for t in tokens_rdg["result"]:
+        result = await run_token(t, rdg=1)
+        if not result["ok"]:
+            return result
+
     tokens = await db.fetch_all(
         """
         SELECT * 
-          FROM token 
+          FROM token_rdg
          WHERE text_id = %s
         """,
         (text_id,),
