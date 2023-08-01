@@ -386,6 +386,8 @@ async def insert_tokens_and_import_annotation(
 
             for a in old_artificials:
                 a["sentence_n"] = new_si + 1  # Get sentence_n from current sentence
+                a["orig_data"] = ""  # Artificials have no element data
+                a["reg_data"] = ""  # Artificials have no element data
                 res = await insert_token(a, text_id)
 
                 if not res["ok"]:

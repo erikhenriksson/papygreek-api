@@ -18,7 +18,7 @@ async def get_text_tokens(request):
 
 async def get_text_tokens_html(request):
     data = await tokens.get_tokens_by_text(request.path_params["id"])
-    print(data)
+
     for token in data["result"]:
         orig_elements = json.loads(token["orig_data"] or "{}")
         reg_elements = json.loads(token["reg_data"] or "{}")

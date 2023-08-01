@@ -147,7 +147,7 @@ def get_changes(orig, reg):
     return answer
 
 
-async def run_token(t, rdg=0):
+async def run_token(t):
     orig = t["orig_plain_transcript"] or ""
     reg = t["reg_plain"] or ""
     if orig.replace("_", "") or reg.replace("_", ""):
@@ -163,7 +163,6 @@ async def run_token(t, rdg=0):
                 change["token_id"] = t["id"]
                 change["text_id"] = t["text_id"]
                 change["regularization"] = regularization
-                change["rdg"] = rdg
                 inserted = await db.execute(
                     """
                     INSERT INTO variation 
@@ -171,14 +170,13 @@ async def run_token(t, rdg=0):
                            text_id,
                            operation,	
                            regularization,	
-                           rdg,	
                            orig,	
                            reg,	
                            reg_bef,	
                            reg_aft,
                            orig_bef,	
                            orig_aft)
-                    VALUES (%(token_id)s, %(text_id)s, %(operation)s, %(regularization)s, %(rdg)s,
+                    VALUES (%(token_id)s, %(text_id)s, %(operation)s, %(regularization)s, 
                     %(orig)s, %(reg)s, %(reg_bef)s, %(reg_aft)s, %(orig_bef)s, %(orig_aft)s)
                     """,
                     (change),
@@ -202,27 +200,16 @@ async def update_text_variations(text_id):
     if not deleted["ok"]:
         return deleted
 
-    tokens_rdg = await db.fetch_all(
-        """
-        SELECT * 
-          FROM token_rdg 
-         WHERE text_id = %s
-        """,
-        (text_id,),
-    )
-    for t in tokens_rdg["result"]:
-        result = await run_token(t, rdg=1)
-        if not result["ok"]:
-            return result
-
     tokens = await db.fetch_all(
         """
         SELECT * 
-          FROM token_rdg
+          FROM token
          WHERE text_id = %s
         """,
         (text_id,),
     )
+    if not tokens["ok"]:
+        return tokens
     for t in tokens["result"]:
         result = await run_token(t)
         if not result["ok"]:
