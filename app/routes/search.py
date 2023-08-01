@@ -82,6 +82,9 @@ def get_meta_filters(q):
         additional_filters += " AND text.series_type = %(series_type)s"
         values["series_type"] = q["series-type"].strip()
 
+    # if q["regularization"]:
+    #    additional_filters += " AND variation.regularization = 1"
+
     return meta_filters, additional_filters, values
 
 
@@ -147,7 +150,9 @@ async def search(request):
                 ret["orig"] = center.split("-")[1].split("+")[0]
                 ret["reg"] = center.split("+")[1].split("-")[0]
             assert all(k in cols("variation") for k in ret.keys())
-            return {k: v for k, v in ret.items() if v}
+            return {
+                k: v.replace("－", "-").replace("＋", "+") for k, v in ret.items() if v
+            }
 
         def validate_token_cols(column, layer):
             if column == "form":
@@ -360,7 +365,8 @@ async def search(request):
                 token.reg_head, 
                 artificial,
                 text.{layer}_status,
-                GROUP_CONCAT(token_rdg.form) AS rdgs
+                GROUP_CONCAT(token_rdg.form) AS rdgs,
+                {"1 as regularization" if not variation_join else "variation.regularization"}
             FROM 
                 token 
             INNER JOIN token_rdg ON token_rdg.token_id = token.id

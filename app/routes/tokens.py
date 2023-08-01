@@ -200,6 +200,19 @@ async def activate_pending_deletion(text_id):
     return result
 
 
+async def activate_pending_deletion_rdg(token_id):
+    result = await db.execute(
+        """
+        UPDATE token_rdg
+           SET pending_deletion = 1
+         WHERE token_id = %s
+        """,
+        (token_id,),
+    )
+
+    return result
+
+
 async def rollback_pending_deletion(text_id):
     result = await db.execute(
         """
@@ -208,6 +221,19 @@ async def rollback_pending_deletion(text_id):
          WHERE text_id = %s
         """,
         (text_id,),
+    )
+
+    return result
+
+
+async def rollback_pending_deletion_rdg(token_id):
+    result = await db.execute(
+        """
+        UPDATE token_rdg
+           SET pending_deletion = 0
+         WHERE token_id = %s
+        """,
+        (token_id,),
     )
 
     return result
@@ -227,6 +253,20 @@ async def delete_not_pending_deletion(text_id):
     return result
 
 
+async def delete_not_pending_deletion_rdg(token_id):
+    result = await db.execute(
+        """
+        DELETE 
+          FROM token_rdg
+         WHERE pending_deletion = 0
+           AND token_id = %s
+        """,
+        (token_id,),
+    )
+
+    return result
+
+
 async def delete_pending_deletion(text_id):
     result = await db.execute(
         """
@@ -236,6 +276,20 @@ async def delete_pending_deletion(text_id):
            AND text_id = %s
         """,
         (text_id,),
+    )
+
+    return result
+
+
+async def delete_pending_deletion_rdg(token_id):
+    result = await db.execute(
+        """
+        DELETE 
+          FROM token_rdg
+         WHERE pending_deletion=1
+           AND token_id = %s
+        """,
+        (token_id,),
     )
 
     return result
@@ -348,6 +402,7 @@ async def insert_tokens_and_import_annotation(
 ):
     pending_activated = await activate_pending_deletion(text_id)
     if not pending_activated["ok"]:
+        print(pending_activated)
         return {"ok": False, "result": "Could not activate pending deletion."}
 
     for new_si, new_s in enumerate(new_sentences):
@@ -380,6 +435,31 @@ async def insert_tokens_and_import_annotation(
                 await delete_not_pending_deletion(text_id)
                 await rollback_pending_deletion(text_id)
                 return {"ok": False, "result": res["result"]}
+
+            # Sucess: got token id
+            token_id = res["result"]
+
+            pending_activated_rdg = await activate_pending_deletion_rdg(token_id)
+            if not pending_activated_rdg["ok"]:
+                return {
+                    "ok": False,
+                    "result": "Could not activate pending deletion for token_rdg.",
+                }
+
+            if new_t["var"]:
+                for var in new_t["var"]:
+                    var["var_data"] = json.dumps(var["var_data"])
+                    result = await insert_token_rdg(var, token_id)
+                    if not result["ok"]:
+                        await delete_not_pending_deletion_rdg(token_id)
+                        await rollback_pending_deletion_rdg(token_id)
+                        await delete_not_pending_deletion(text_id)
+                        await rollback_pending_deletion(text_id)
+                        return {"ok": False, "result": res["result"]}
+
+            # Success: inserted token rdg
+
+            await delete_pending_deletion_rdg(token_id)
 
         if will_import:
             old_artificials = [x for x in old_sentences[import_i] if is_artificial(x)]

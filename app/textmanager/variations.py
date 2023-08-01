@@ -154,8 +154,8 @@ async def run_token(t):
         changes = get_changes(orig, reg)
         regularization = (
             1
-            if (t["orig_variation_path"] or "").startswith("choice/orig")
-            or (t["reg_variation_path"] or "").startswith("choice/reg")
+            if "orig" in (t["orig_variation_path"] or "")
+            or "reg" in (t["reg_variation_path"] or "")
             else 0
         )
         for change in changes:

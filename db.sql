@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS `token` (
 
     `insertion_id` VARCHAR(80),
     `artificial`   VARCHAR(80),
-    `pending_deletion`   SMALLINT unsigned,
+    `pending_deletion`   SMALLINT unsigned DEFAULT 0,
     --
     PRIMARY KEY (`id`),
     KEY (`text_id`),
@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS `token_2` (
 
     `insertion_id` VARCHAR(80),
     `artificial`   VARCHAR(80),
-    `pending_deletion`   SMALLINT unsigned,
+    `pending_deletion`   TINYINT unsigned DEFAULT 0,
     --
     PRIMARY KEY (`id`),
     KEY (`text_id`),
@@ -270,6 +270,8 @@ CREATE TABLE IF NOT EXISTS `token_rdg_2` (
     `lang`     VARCHAR(512),
     `variation_path`     TEXT,
     `data`     TEXT,
+    `pending_deletion`   TINYINT unsigned DEFAULT 0,
+
     --
     PRIMARY KEY (`id`),
     KEY (`form`(80)),
@@ -278,6 +280,7 @@ CREATE TABLE IF NOT EXISTS `token_rdg_2` (
     KEY (`lang`(80)),
     KEY (`variation_path`(80)),
     KEY (`token_id`),
+    KEY (`pending_deletion`),
     FOREIGN KEY (`token_id`) REFERENCES `token` (`id`)
         ON DELETE CASCADE
 );
@@ -463,7 +466,6 @@ CREATE TABLE IF NOT EXISTS `variation` (
     `token_id`          INT unsigned NOT NULL,
     `operation`         TINYINT NOT NULL,
     `regularization`    TINYINT NOT NULL DEFAULT 0,
-    `rdg`               TINYINT NOT NULL DEFAULT 0,
     `orig`              VARCHAR(80),
     `reg`               VARCHAR(80),
     `reg_bef`           VARCHAR(80),
@@ -474,7 +476,6 @@ CREATE TABLE IF NOT EXISTS `variation` (
     PRIMARY KEY (`id`),
     KEY (`operation`),
     KEY (`regularization`),
-    KEY (`rdg`),
     KEY (`orig`),
     KEY (`reg`),
     KEY (`reg_aft`),
