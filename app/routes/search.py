@@ -369,7 +369,7 @@ async def search(request):
                 {"1 as regularization" if not variation_join else "variation.regularization"}
             FROM 
                 token 
-            INNER JOIN token_rdg ON token_rdg.token_id = token.id
+            LEFT JOIN token_rdg ON token_rdg.token_id = token.id
             {variation_join}
             JOIN 
                 `text` 
