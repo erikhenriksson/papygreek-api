@@ -65,6 +65,8 @@ app = Starlette(
                 "https://localhost",
                 "https://localhost/",
                 "https://127.0.0.1:5173",
+                "https://new.papygreek.com",
+                "https://papygreek.com",
             ],
             allow_methods=["*"],
             allow_headers=["*"],
