@@ -8,6 +8,10 @@ def is_int(test):
     return test.isnumeric()
 
 
+def to_int_or_none(s):
+    return int(s) if is_int(s) else ""
+
+
 def debug(s):
     if DEBUG:
         print(s)
@@ -65,6 +69,7 @@ def cols(table):
             "orig_lang",
             "orig_info",
             "orig_lemma",
+            "orig_lemma_plain",
             "orig_postag",
             "orig_relation",
             "orig_head",
@@ -77,6 +82,7 @@ def cols(table):
             "reg_lang",
             "reg_info",
             "reg_lemma",
+            "reg_lemma_plain",
             "reg_postag",
             "reg_relation",
             "reg_head",
@@ -85,18 +91,13 @@ def cols(table):
         ],
         "variation": [
             "operation",
+            "regularization",
             "orig_bef",
             "orig_aft",
             "orig",
             "reg",
             "reg_bef",
             "reg_aft",
-            "p_orig_bef",
-            "p_orig_aft",
-            "p_orig",
-            "p_reg",
-            "p_reg_bef",
-            "p_reg_aft",
         ],
     }
     return tables[table]

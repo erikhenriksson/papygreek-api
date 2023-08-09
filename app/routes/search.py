@@ -8,7 +8,7 @@ from starlette.authentication import requires
 from starlette.routing import Route
 
 from ..config import db
-from ..utils import cols, is_int, debug
+from ..utils import cols, is_int, debug, to_int_or_none
 from ..response import JSONResponse
 from . import analyses
 
@@ -115,13 +115,14 @@ async def search(request):
     layer = q["layer"]
     assert layer in ["orig", "reg"]
 
-    # Values will contain the SQL parameters
-    values = {}
-
     # Get metadata filters
     meta_filters, additional_filters, values = get_meta_filters(q)
 
     def get_leaf_query(query, values, prefix="root"):
+        debug(
+            f"Entering get_leaf_query, query={query}, values={values}, prefix={prefix}"
+        )
+
         def get_variation_query(var_query_string):
             ret = {
                 "operation": "0",
@@ -157,7 +158,7 @@ async def search(request):
         def validate_token_cols(column, layer):
             if column == "form":
                 column = f"{layer}_plain"
-            elif column in ["postag", "relation", "head", "lemma"]:
+            elif column in ["postag", "relation", "head", "lemma", "lemma_plain"]:
                 column = f"{layer}_{column}"
             elif column in ["text_id", "*"]:
                 column = column
@@ -167,6 +168,7 @@ async def search(request):
             return column
 
         if "*" in query.keys():
+            # If searching for anything (*), limit to finalized treebanks
             if prefix == "root":
                 where = "INNER JOIN text ON token.text_id = text.ID AND text.orig_status=3 AND text.reg_status=3"
             else:
@@ -206,7 +208,11 @@ async def search(request):
         return where, values, variation_join, rdg_join
 
     async def tree_query(root, leaves, root_query=0):
-        # Query a tree
+        debug(
+            f"Entering tree_query {'(root version)' if root_query else ''} with root={root}, leaves={leaves}"
+        )
+
+        # Build depth query
         def depth_q(d):
             try:
                 d = f"={int(d)}"
@@ -214,125 +220,235 @@ async def search(request):
                 d = ">0"
             return d
 
-        def distance_q(d):
-            try:
-                if d.startswith((">=", "<=")):
-                    return (d[0:2], f"+ {int(d[2:])}")
-                elif d.startswith(("=", "<", ">")):
-                    return (d[0:1], f"+ {int(d[1:])}")
-                else:
-                    return ("=", f"+ {int(d)}")
-            except:
-                return (">", "")
-
+        # Extract special parameters (depth and order)
         depths = [depth_q(x.pop("depth")) if "depth" in x else "=1" for x in leaves]
-        distances = [
-            distance_q(x.pop("distance")) if "distance" in x else (">", "")
-            for x in leaves
+        root_order = (
+            to_int_or_none(root.pop("order"))
+            if type(root) == dict and "order" in root
+            else ""
+        )
+        leaf_orders = [
+            to_int_or_none(x.pop("order")) if "order" in x else "" for x in leaves
         ]
+
         wheres = []
-        values = {}
+        this_values = {}
         leafs_variation_join = []
         leafs_rdg_join = []
 
+        debug(f"Now, we enumerate leaves to populate vars")
+
         for leaf_i, leaf in enumerate(leaves):
-            where, values, variation_join, rdg_join = get_leaf_query(
-                leaf, values, str(leaf_i)
+            where, this_values, variation_join, rdg_join = get_leaf_query(
+                leaf, this_values, str(leaf_i)
             )
 
             leafs_variation_join.append(variation_join)
             leafs_rdg_join.append(rdg_join)
             wheres.append(where)
 
+        debug(
+            f"Finished leaf enumeration. Result: leafs_var_join={leafs_variation_join}, leafs_rdg_join={leafs_rdg_join}, wheres={wheres}, this_values={this_values}"
+        )
+
         if root_query:
             root, values, root_variation_join, root_rdg_join = get_leaf_query(
-                root, values
+                root, this_values
             )
             if not root.startswith("INNER"):
                 root = f"WHERE ({root})"
             ancestor_filter = f'SELECT token.id FROM token {"JOIN variation ON token.id=variation.token_id" if root_variation_join else ""} {"JOIN token_rdg ON token_rdg.token_id=token.id" if root_rdg_join else ""} {root}'
+            debug(f"Ancestor filter (root version) is {ancestor_filter}")
         else:
             ancestor_filter = ",".join(root)
+            debug(f"Ancestor filter is {ancestor_filter}")
 
         descendant_select = ",".join(
-            [f"L{i}.descendant as L{i}" for i in range(len(leaves))]
+            [f"L{i}.descendant as L{i}, L{i}.n as L{i}n" for i in range(len(leaves))]
+            # [f"L{i}.descendant as L{i}" for i in range(len(leaves))]
         )
         descendant_joins = "\n".join(
             [
-                f'join token_closure L{i} on R.ancestor = L{i}.ancestor AND L{i}.depth {depths[i]} AND L{i}.descendant IN (SELECT token.id from token {"JOIN variation ON token.id=variation.token_id" if leafs_variation_join[i] else ""} {"JOIN token_rdg ON token_rdg.token_id=token.id" if leafs_rdg_join[i] else ""} WHERE ({x}))'
+                f'JOIN token_closure L{i} ON R.ancestor = L{i}.ancestor AND L{i}.depth {depths[i]} AND L{i}.descendant IN (SELECT token.id FROM token {"JOIN variation ON token.id=variation.token_id" if leafs_variation_join[i] else ""} {"JOIN token_rdg ON token_rdg.token_id=token.id" if leafs_rdg_join[i] else ""} WHERE ({x}))'
                 for i, x in enumerate(wheres)
             ]
         )
-        descendant_filters = []
-        descendant_filter = ""
-        if len(leaves) > 1:
-            for i in range(len(leaves)):
-                if i > 0:
-                    descendant_filters.append(
-                        f"L{i}.n {distances[i][0]} (L{i-1}.n {distances[i][1]})"
-                    )
-            descendant_filter = f" AND {' AND '.join(descendant_filters)}"
 
-        """
-        if len(leaves) > 1:
-            descendant_filter = " <> ".join(
-                [f"L{i}.descendant" for i in range(len(leaves))]
+        sibling_to_root_order_filter = []
+        sibling_to_sibling_order_filter = []
+
+        # Get the root order
+        for i, leaf_order in enumerate(leaf_orders):
+            if is_int(leaf_order):
+                if is_int(root_order) and leaf_order != root_order:
+                    operator = ">" if leaf_order > root_order else "<"  # type: ignore
+                    sibling_to_root_order_filter.append(f"L{i}.n {operator} Rn.n")
+
+        if sibling_to_root_order_filter:
+            sibling_to_root_order_filter = (
+                f" AND {' AND '.join(sibling_to_root_order_filter)}"
             )
-            descendant_filter = " AND " + descendant_filter
-        """
+        else:
+            sibling_to_root_order_filter = ""
+
+        for i, num1 in enumerate(leaf_orders):
+            for j, num2 in enumerate(leaf_orders[i + 1 :]):
+                if is_int(num1) and is_int(num2):
+                    if num1 < num2:  # type: ignore
+                        sibling_to_sibling_order_filter.append(
+                            f"L{i}.n < L{i + j + 1}.n"
+                        )
+                    elif num1 > num2:  # type: ignore
+                        sibling_to_sibling_order_filter.append(
+                            f"L{i}.n > L{i + j + 1}.n"
+                        )
+
+        if sibling_to_sibling_order_filter:
+            sibling_to_sibling_order_filter = (
+                f" AND {' AND '.join(sibling_to_sibling_order_filter)}"
+            )
+        else:
+            sibling_to_sibling_order_filter = ""
+
+        # The following makes sure that if the leaves have the same parameters, they are all included
+        # using the MySQL <> syntax (= require leaves to be different)
+        require_distinct_leaves = ""
+        if len(leaves) > 1:
+            require_distinct_leaves = " AND " + (
+                " <> ".join([f"L{i}.descendant" for i in range(len(leaves))])
+            )
+
+        descendant_groupers = ",".join([f"L{i}" for i in range(len(leaves))])
+        group_by = f"R, {descendant_groupers}" if descendant_groupers else "R"
 
         sql = f"""
-            SELECT R.ancestor as R, {descendant_select}
+            SELECT R.ancestor as R, Rn.n as RN, {descendant_select}
             FROM token_closure R
             {descendant_joins}
+            JOIN token_closure Rn ON R.ancestor=Rn.descendant
             WHERE R.ancestor IN ({ancestor_filter})
-            {descendant_filter}
-            GROUP BY R.ancestor;
+            {sibling_to_root_order_filter}
+            {require_distinct_leaves}
+            {sibling_to_sibling_order_filter}
+            GROUP BY {group_by}
             """
-        debug(f"tree_query: sql: {sql}")
-        debug(f"tree_query: values: {values}")
+        debug(f"This tree query was built: '{sql}, values={this_values}'")
 
-        closure = await db.fetch_all(sql, values)
+        closure = await db.fetch_all(sql, this_values)
         if closure["ok"]:
             debug(
-                f"tree_query: result: keys: {closure['result'][0].keys() if closure['result'] else '()'}"
+                f'Got {len(closure["result"])} results. Keys are: {closure["result"][0].keys() if closure["result"] else "()"}'
             )
-            closure = [list(x.values()) for x in closure["result"]]
+            # debug(closure["result"])
+            data = [list(x.values()) for x in closure["result"]]
+            closure = [
+                [sublist[i] for i in range(0, len(sublist), 2)] for sublist in data
+            ]
+            closure_orders = [
+                [sublist[i] for i in range(1, len(sublist), 2)] for sublist in data
+            ]
+
+            print(f"closure is {closure}")
+
         else:
             raise Exception(closure["result"])
+        debug("")
+        return closure, closure_orders
 
-        return closure
+    """
+    async def traverse(tree, ancestor_and_descendant_ids, level):
 
-    async def traverse(tree, ancestor_and_descendant_ids):
-        debug(f"traversing this tree: {tree}")
         for el_i, el in enumerate(tree):
-            if "children" in el:
-                root = el["q"]
-                leaves = [x["q"] for x in el["children"]]
-
-                debug(f"traverse: root: {root}, leaves: {leaves}")
+            if not "children" in el:
+                level -= 1
+                return ancestor_and_descendant_ids
+            else:
                 ancestor_ids = [str(x[el_i + 1]) for x in ancestor_and_descendant_ids]
-                debug(f"traverse: ancestor_ids: {len(ancestor_ids)}")
-                this_ancestor_and_descendant_ids = await tree_query(
-                    ancestor_ids, leaves
-                )
-                debug(
-                    f"traverse: this_ancestor_and_descendant_ids: {len(this_ancestor_and_descendant_ids)}"
+                this_ancestor_and_descendant_ids, _ = await tree_query(
+                    ancestor_ids, [x["q"] for x in el["children"]]
                 )
                 if not this_ancestor_and_descendant_ids:
                     return []
+
+                ancestor_and_descendant_ids = await traverse(
+                    el["children"], this_ancestor_and_descendant_ids, level + 1
+                )
+
                 this_ancestor_ids = [x[0] for x in this_ancestor_and_descendant_ids]
                 ancestor_and_descendant_ids = [
                     x
                     for x in ancestor_and_descendant_ids
                     if x[el_i + 1] in this_ancestor_ids
                 ]
+
+        return ancestor_and_descendant_ids
+    """
+
+    async def traverse(tree, ancestor_and_descendant_ids, level):
+        debug(
+            f"TRAVERSING LEVEL {level}, with {len(ancestor_and_descendant_ids)} ancids"
+        )
+        debug(f"Entering traverse,tree={tree}")
+        # debug(f"ANCESTOR AND DESCENDANT IDS ARE NOW: \n {ancestor_and_descendant_ids}")
+        debug("Now enumerating the subtrees")
+        for el_i, el in enumerate(tree):
+            debug(f"Current ({el_i}th) subtree={el}")
+            if not "children" in el:
+                level -= 1
+                debug(
+                    f"After the traversal, we are back with these {len(ancestor_and_descendant_ids)} ancestor_and_descendant_ids = {ancestor_and_descendant_ids}"
+                )
+                return ancestor_and_descendant_ids
+            else:
+                debug(f'Got children. Leaves are {[x["q"] for x in el["children"]]}')
+
+                # NOTE: the following has str(x[el_i + 1]) because index 0 are roots;
+                # el_i + 1 is the new ancestor
+                # print(f"Now there are {len(next_ancids)} ancestor and descendant ids")
+
+                ancestor_ids = [str(x[el_i + 1]) for x in ancestor_and_descendant_ids]
+                debug(f"{len(ancestor_ids)} ancestor ids ")
+                (
+                    this_ancestor_and_descendant_ids,
+                    this_ancestor_and_descendant_ns,
+                ) = await tree_query(ancestor_ids, [x["q"] for x in el["children"]])
+                if not this_ancestor_and_descendant_ids:
+                    debug("No results!")
+                    return []
+
+                this_ancestor_and_descendant_ids = await traverse(
+                    el["children"], this_ancestor_and_descendant_ids, level + 1
+                )
+
+                # orders[level][el_i]["result"] = this_ancestor_orders
+
+                """
+                retained_orders = [
+                    this_ancestor_orders[i]
+                    for i, x in enumerate(ancestor_and_descendant_ids)
+                    if x[el_i + 1] in this_ancestor_ids
+                ]
+                """
+
+                """
+                The following code is important.
+                """
+                # First, get new ancestor list
+                this_ancestor_ids = [x[0] for x in this_ancestor_and_descendant_ids]
+
+                # THE MAIN FILTERING CODE: retain just those ancestor_and_descendant_ids
+                # where the current ancestor (el_i + 1) was returned by the tree query
+                # (this_ancestor_and_descendant_ids)
+                ancestor_and_descendant_ids = [
+                    x
+                    for x in ancestor_and_descendant_ids
+                    if x[el_i + 1] in this_ancestor_ids
+                ]
+
                 debug(
                     f"traverse: ancestor_and_descendant_ids (after filtering): {len(ancestor_and_descendant_ids)}"
                 )
-                await traverse(el["children"], ancestor_and_descendant_ids)
-            else:
-                debug("traverse: no children left")
+
         return ancestor_and_descendant_ids
 
     def get_final_sql(
@@ -381,6 +497,8 @@ async def search(request):
             GROUP BY token.id
         """
 
+    orders = []
+
     try:
         # Get the parameters as dict
         query = query_to_dict([q["q"]])[0]
@@ -392,17 +510,69 @@ async def search(request):
 
         # Tree search (recursive)
         else:
-            ancestor_and_descendant_ids = await tree_query(
+            debug("This is a tree search.")
+
+            # Get order relationships
+
+            print(query)
+            """
+            def extract_orders(data):
+                result = []
+                order = int(data["q"]["order"]) if "order" in data["q"] else ""
+                result.append({"order": order, "result": []})
+
+                if "children" in data:
+                    for child in data["children"]:
+                        result.append(extract_orders(child))
+
+                return result
+
+            orders = extract_orders(query)
+            print(orders)
+            """
+
+            def to_two_dimensional_list(data, level=0, result=None):
+                if result is None:
+                    result = []
+
+                # Ensure that there is a list for the current level
+                while len(result) <= level:
+                    result.append([])
+
+                # Extract the 'order' value if it exists
+                order_value = data["q"].get("order", "")
+
+                result[level].append(
+                    {"order": order_value, "result": [], "level": level, "i": 0}
+                )
+
+                children = data.get("children", [])
+                for i, child in enumerate(children):
+                    to_two_dimensional_list(child, level + 1, result)
+
+                return result
+
+            orders = to_two_dimensional_list(query)
+
+            ancestor_and_descendant_ids, ancestor_orders = await tree_query(
                 query["q"], [x["q"] for x in query["children"]], 1
             )
 
+            orders[0][0]["result"] = ancestor_orders
+
             # Traverse result will be a list of token IDs
-            result = await traverse(query["children"], ancestor_and_descendant_ids)
+            result = await traverse(
+                query["children"],
+                ancestor_and_descendant_ids,
+                1,
+            )
             if not result:
                 return JSONResponse({"ok": True, "result": []})
             where = f"token.id IN ({','.join([str(x[0]) for x in result])})"
             variation_join = ""
             rdg_join = ""
+
+            print(orders)
 
         sql = get_final_sql(
             variation_join, rdg_join, where, meta_filters, additional_filters
@@ -515,7 +685,7 @@ async def get_search_by_id(request):
             """
             SELECT * 
               FROM search 
-             WHERE user_id = %(user)s 
+             WHERE (user_id = %(user)s or public = 1)
                AND id = %(id)s
             """,
             {"user": request.user.id, "id": request.path_params["id"]},
