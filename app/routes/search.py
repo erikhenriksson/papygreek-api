@@ -118,6 +118,8 @@ async def search(request):
     # Get metadata filters
     meta_filters, additional_filters, values = get_meta_filters(q)
 
+    n_index = {}
+
     def get_leaf_query(query, values, prefix="root"):
         # debug(
         #    f"Entering get_leaf_query, query={query}, values={values}, prefix={prefix}"
@@ -392,6 +394,7 @@ async def search(request):
     """
 
     async def traverse(tree, ancestor_and_descendant_ids, level):
+        nonlocal n_index
         # debug(level)
         # debug(
         #    f"TRAVERSING LEVEL {level}, with {len(ancestor_and_descendant_ids)} ancids"
@@ -418,8 +421,15 @@ async def search(request):
                     # debug("No results!")
                     return []
 
-                debug(f"{level+1}: {el_i}, got {this_ancestor_and_descendant_ids}\n")
+                # debug(f"{level+1}: {el_i}, got {this_ancestor_and_descendant_ids}\n")
                 # debug(f"{level+1}: {el_i}, ns {this_ancestor_and_descendant_ns}")
+
+                for nids_i, nids in enumerate(this_ancestor_and_descendant_ids):
+                    for nid_i, nid in enumerate(nids):
+                        if nid not in n_index:
+                            n_index[nid] = this_ancestor_and_descendant_ns[nids_i][
+                                nid_i
+                            ]
 
                 this_ancestor_and_descendant_ids = await traverse(
                     el["children"], this_ancestor_and_descendant_ids, level + 1
@@ -440,6 +450,8 @@ async def search(request):
                 """
                 # First, get new ancestor list
                 this_ancestor_ids = [x[0] for x in this_ancestor_and_descendant_ids]
+
+                # debug(f"------ ANCESTORS ({level}): {this_ancestor_ids} ------")
 
                 # THE MAIN FILTERING CODE: retain just those ancestor_and_descendant_ids
                 # where the current ancestor (el_i + 1) was returned by the tree query
@@ -462,8 +474,10 @@ async def search(request):
                 # debug(
                 #    f"traverse, level {level}: ancestor_and_descendant_ids (after filtering): {len(ancestor_and_descendant_ids)}"
                 # )
+            # else:
+            #    debug(f"End of tree! {ancestor_and_descendant_ids}")
 
-        debug(f"FINAL RETURN: level {level}, returning {ancestor_and_descendant_ids}")
+        # debug(f"FINAL RETURN: level {level}, returning {ancestor_and_descendant_ids}")
         return ancestor_and_descendant_ids
 
     def get_final_sql(
@@ -543,7 +557,6 @@ async def search(request):
                 return result
 
             orders = extract_orders(query)
-            print(orders)
             """
 
             def to_two_dimensional_list(data, level=0, result=None):
@@ -581,6 +594,7 @@ async def search(request):
             )
             if not result:
                 return JSONResponse({"ok": True, "result": []})
+
             where = f"token.id IN ({','.join([str(x[0]) for x in result])})"
             variation_join = ""
             rdg_join = ""
@@ -614,18 +628,62 @@ async def search(request):
             )
 
     except Exception as error:
-        traceback.print_exc()
+        debug(traceback.format_exc())
         e = error.__class__.__name__
         detail = "Server error"
         if e == "NotImplementedError":
-            detail = "Some fields are incorrect"
+            detail = "Some fields are incorrect. Check the <span class='help-link'>user guide</span>. "
         elif e == "ResourceWarning":
             detail = "No results"
         elif e == "ValueError":
-            detail = "Please use search parameters ([key]=[value])."
+            detail = "Please enter some search parameters ([key]=[value])."
         return JSONResponse(
-            {"ok": False, "detail": detail, "error": error}, status_code=200
+            {"ok": False, "detail": detail, "error": error, "result": "No results"},
+            status_code=200,
         )
+
+
+@requires("user")
+async def check_if_search_exists(request):
+    q = await request.json()
+    db_searches = await db.fetch_all(
+        """
+        SELECT id 
+          FROM search 
+         WHERE user_id = %(user)s 
+           AND name = %(name)s
+        """,
+        {"user": request.user.id, "name": q["name"]},
+    )
+    if db_searches["ok"]:
+        return JSONResponse({"ok": 1, "result": db_searches["result"]})
+
+
+@requires("user")
+async def delete(request):
+    q = await request.json()
+    db_searches = await db.fetch_all(
+        """
+        SELECT id 
+          FROM search 
+         WHERE user_id = %(user)s 
+           AND id = %(id)s
+        """,
+        {"user": request.user.id, "id": q["id"]},
+    )
+    if db_searches["result"]:
+        deleted = await db.execute(
+            """
+            DELETE
+            FROM search 
+            WHERE user_id = %(user)s 
+            AND id = %(id)s
+            """,
+            {"user": request.user.id, "id": q["id"]},
+        )
+        if deleted["ok"] == 1:
+            return JSONResponse({"ok": True})
+    return JSONResponse({"ok": False})
 
 
 @requires("user")
@@ -657,7 +715,7 @@ async def save(request):
         )
 
         return JSONResponse(
-            {"ok": 1, "result": {"id": db_searches["result"][0]["id"], "new": 0}}
+            {"ok": True, "result": {"id": db_searches["result"][0]["id"], "new": 0}}
         )
 
     else:
@@ -675,7 +733,7 @@ async def save(request):
         )
 
         return JSONResponse(
-            {"ok": 1, "result": {"id": new_search_id["result"], "new": 1}}
+            {"ok": True, "result": {"id": new_search_id["result"], "new": 1}}
         )
 
 
@@ -686,6 +744,23 @@ async def get_user_searches(request):
         SELECT * 
           FROM search 
          WHERE user_id = %(user)s 
+         ORDER BY name
+        """,
+        {"user": request.user.id},
+    )
+    return JSONResponse(searches)
+
+
+@requires("user")
+async def get_other_users_public_searches(request):
+    searches = await db.fetch_all(
+        """
+        SELECT search.id, search.name, user.name as user_name
+          FROM search 
+          JOIN user ON search.user_id = user.id
+         WHERE public = 1
+           AND search.user_id != %(user)s 
+         ORDER BY user.name, search.name
         """,
         {"user": request.user.id},
     )
@@ -796,7 +871,10 @@ async def get_sentence_tree(request):
 routes = [
     Route("/", search, methods=["POST"]),
     Route("/save", save, methods=["POST"]),
+    Route("/delete", delete, methods=["POST"]),
+    Route("/check_if_exists", check_if_search_exists, methods=["POST"]),
     Route("/get_saved", get_user_searches),
+    Route("/get_others_public", get_other_users_public_searches),
     Route("/get_by_id/{id:int}", get_search_by_id),
     Route("/get_sentence_tree", get_sentence_tree, methods=["POST"]),
 ]

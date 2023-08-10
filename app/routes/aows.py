@@ -228,7 +228,7 @@ async def add_person_and_association(request):
         INSERT INTO person (name, tm_id, gender) 
         VALUES (%s, %s, %s)
     """,
-        (q["person_name"], tm_id, q["gender"]),
+        (q["person_name"], tm_id, gender),
     )
     if result["ok"]:
         result = await db.execute(
