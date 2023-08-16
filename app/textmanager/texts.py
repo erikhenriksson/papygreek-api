@@ -5,22 +5,42 @@ from pprint import pprint
 from papygreektokenizer import tokenize_file, tokenize_string
 from tabulate import tabulate
 from tqdm import tqdm
-import unicodedata
-import json
 from ..config import db, IDP_PATH
 from ..routes import tokens
+from ..utils import plain, grave_to_acute
 
-punct = list(",..·;;·.§")
 
-
-def plain(x: str) -> str:
-    return "".join(
-        [
-            unicodedata.normalize("NFD", a)[0].lower()
-            for a in x
-            if a.isalpha() or a in punct + ["_"]
-        ]
+async def TEMP_grave_to_acute():
+    result = await db.fetch_all(
+        """
+        SELECT id,
+               orig_lemma, 
+               reg_lemma
+          FROM token
+         WHERE orig_lemma <> '' OR reg_lemma <> ''
+        """
     )
+    for token in tqdm(result["result"]):
+        orig_lemma = grave_to_acute(token.get("orig_lemma", ""))
+        reg_lemma = grave_to_acute(token.get("reg_lemma", ""))
+        orig_lemma_plain = plain(orig_lemma)
+        reg_lemma_plain = plain(reg_lemma)
+
+        updated = await db.execute(
+            """
+            UPDATE token
+            SET orig_lemma = %s, 
+                reg_lemma = %s, 
+                orig_lemma_plain = %s, 
+                reg_lemma_plain = %s 
+            WHERE id = %s
+            """,
+            (orig_lemma, reg_lemma, orig_lemma_plain, reg_lemma_plain, token["id"]),
+        )
+        if not updated["ok"]:
+            print(f"Error with {token}")
+            print(f"{updated}")
+            exit()
 
 
 async def TEMP_migrate_to_token2_part_2():
@@ -774,6 +794,11 @@ async def cli(flags):
         exit()
     if "TEMP_migrate_to_token2_part_2" in flags:
         result = await TEMP_migrate_to_token2_part_2()
+        print(result)
+        exit()
+
+    if "TEMP_grave_to_acute" in flags:
+        result = await TEMP_grave_to_acute()
         print(result)
         exit()
 

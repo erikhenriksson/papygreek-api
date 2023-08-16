@@ -5,6 +5,7 @@ from ..response import JSONResponse
 
 from . import tokens, comments, text
 from ..config import db
+from ..utils import plain, grave_to_acute
 
 
 async def update_annotation(data):
@@ -12,25 +13,30 @@ async def update_annotation(data):
     # annotations.
     valid_keys = [
         "orig_lemma",
+        "orig_lemma_plain",
         "orig_postag",
         "orig_relation",
         "orig_head",
         "reg_lemma",
+        "reg_lemma_plain",
         "reg_postag",
         "reg_relation",
         "reg_head",
         "insertion_id",
         "artificial",
         "lemma_orig",
+        "lemma_orig_plain",
         "postag_orig",
         "relation_orig",
         "head_orig",
         "lemma_reg",
+        "lemma_reg_plain",
         "postag_reg",
         "relation_reg",
         "head_reg",
         "postag",
         "lemma",
+        "lemma_plain",
         "relation",
         "head",
         "n",
@@ -50,6 +56,17 @@ async def update_annotation(data):
             update_data["reg_" + k] = v
         else:
             update_data[k] = v
+
+    if "orig_lemma" in update_data:
+        update_data["orig_lemma"] = grave_to_acute(
+            update_data.get("orig_lemma", "") or ""
+        )
+        update_data["orig_lemma_plain"] = plain(update_data.get("orig_lemma", "") or "")
+    if "reg_lemma" in update_data:
+        update_data["reg_lemma"] = grave_to_acute(
+            update_data.get("reg_lemma", "") or ""
+        )
+        update_data["reg_lemma_plain"] = plain(update_data.get("reg_lemma", "") or "")
 
     # Convert to SQL string
     update_string = ", ".join([f"{k}=%({k})s " for k, v in update_data.items()])
@@ -71,11 +88,13 @@ async def add_artificial(data, sentence_n, text_id):
     valid_keys = [
         "orig_form",
         "orig_lemma",
+        "orig_lemma_plain",
         "orig_postag",
         "orig_relation",
         "orig_head",
         "reg_form",
         "reg_lemma",
+        "reg_lemma_plain",
         "reg_postag",
         "reg_relation",
         "reg_head",
@@ -85,6 +104,10 @@ async def add_artificial(data, sentence_n, text_id):
     ]
     data = data["data"]
     assert all(elem in valid_keys for elem in data.keys())
+    data["orig_lemma"] = grave_to_acute(data.get("orig_lemma", "") or "")
+    data["reg_lemma"] = grave_to_acute(data.get("reg_lemma", "") or "")
+    data["orig_lemma_plain"] = plain(data.get("orig_lemma", "") or "")
+    data["reg_lemma_plain"] = plain(data.get("reg_lemma", "") or "")
 
     # Add fields
     data["sentence_n"] = sentence_n

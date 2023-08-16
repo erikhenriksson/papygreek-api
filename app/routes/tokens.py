@@ -421,11 +421,13 @@ async def insert_tokens_and_import_annotation(
 
         for new_ti, new_t in enumerate(new_s):
             if will_import:
-                new_t["orig_lemma"] = old_s[new_ti]["reg_lemma"]
-                new_t["orig_postag"] = old_s[new_ti]["reg_postag"]
-                new_t["orig_relation"] = old_s[new_ti]["reg_relation"]
-                new_t["orig_head"] = old_s[new_ti]["reg_head"]
+                new_t["orig_lemma"] = old_s[new_ti]["orig_lemma"]
+                new_t["orig_lemma_plain"] = old_s[new_ti]["orig_lemma_plain"]
+                new_t["orig_postag"] = old_s[new_ti]["orig_postag"]
+                new_t["orig_relation"] = old_s[new_ti]["orig_relation"]
+                new_t["orig_head"] = old_s[new_ti]["orig_head"]
                 new_t["reg_lemma"] = old_s[new_ti]["reg_lemma"]
+                new_t["reg_lemma_plain"] = old_s[new_ti]["reg_lemma_plain"]
                 new_t["reg_postag"] = old_s[new_ti]["reg_postag"]
                 new_t["reg_relation"] = old_s[new_ti]["reg_relation"]
                 new_t["reg_head"] = old_s[new_ti]["reg_head"]

@@ -1,4 +1,25 @@
+import unicodedata as ud
+
 from .config import DEBUG
+
+punct = list(",..·;;·.§")
+
+grave_to_acute = lambda x: ud.normalize(
+    "NFC",
+    ud.normalize("NFD", x or "").translate(
+        {ord("\N{COMBINING GRAVE ACCENT}"): ord("\N{COMBINING ACUTE ACCENT}")}
+    ),
+)
+
+
+def plain(x: str) -> str:
+    return "".join(
+        [
+            ud.normalize("NFD", a)[0].lower()
+            for a in (x or "")
+            if a.isalpha() or a in punct + ["_"]
+        ]
+    )
 
 
 def is_int(test):

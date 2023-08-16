@@ -13,6 +13,7 @@ from ..response import JSONResponse
 from .comments import insert_comment, get_comment
 from .tokens import get_tokens_by_text
 from .text import change_text_status
+from ..utils import plain, grave_to_acute
 
 from lxml import etree
 
@@ -77,9 +78,21 @@ async def delete_artificial(token_id):
 
 async def update_token_annotation(layer, data):
     if layer == "orig":
-        cols = ["orig_lemma", "orig_postag", "orig_relation", "orig_head"]
+        cols = [
+            "orig_lemma",
+            "orig_lemma_plain",
+            "orig_postag",
+            "orig_relation",
+            "orig_head",
+        ]
     elif layer == "reg":
-        cols = ["reg_lemma", "reg_postag", "reg_relation", "reg_head"]
+        cols = [
+            "reg_lemma",
+            "reg_lemma_plain",
+            "reg_postag",
+            "reg_relation",
+            "reg_head",
+        ]
     else:
         return {"ok": False, "result": "No layer"}
     update_artificial_form = (
@@ -93,16 +106,18 @@ async def update_token_annotation(layer, data):
         UPDATE token 
            SET {update_artificial_form}
                {cols[0]} = %(lemma)s, 
-               {cols[1]} = %(postag)s, 
-               {cols[2]} = %(relation)s, 
-               {cols[3]} = %(head)s, 
+               {cols[1]} = %(lemma_plain)s, 
+               {cols[2]} = %(postag)s, 
+               {cols[3]} = %(relation)s, 
+               {cols[4]} = %(head)s, 
                insertion_id = %(insertion_id)s, 
                artificial = %(artificial)s
         WHERE id = %(token_id)s
     """,
         {
             "artificial_form": data.get("form", ""),
-            "lemma": data.get("lemma", None),
+            "lemma": grave_to_acute(data.get("lemma", "") or ""),
+            "lemma_plain": plain(data.get("lemma", "") or ""),
             "postag": data.get("postag", None),
             "relation": data.get("relation", None),
             "head": data.get("head", None),
@@ -191,7 +206,7 @@ async def get_layer(request):
                             if a.isalpha() or a.isnumeric() or a in char_filter
                         ]
                     )
-                    val = val.replace('()', '')
+                    val = val.replace("()", "")
                     if not val:
                         val = orig_val
 

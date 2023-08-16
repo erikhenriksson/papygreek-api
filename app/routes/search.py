@@ -12,6 +12,8 @@ from ..utils import cols, is_int, debug, to_int_or_none
 from ..response import JSONResponse
 from . import analyses
 
+from pprint import pprint
+
 
 def get_meta_filters(q):
     meta_filters = []
@@ -120,6 +122,8 @@ async def search(request):
 
     n_index = {}
 
+    result_nodes = set()
+
     def get_leaf_query(query, values, prefix="root"):
         # debug(
         #    f"Entering get_leaf_query, query={query}, values={values}, prefix={prefix}"
@@ -201,6 +205,8 @@ async def search(request):
                 q = f" token_rdg.plain = %({prefix}_{col})s "
                 rdg_join = "1"
             else:
+                if col == "order":
+                    continue
                 values[f"{prefix}_{col}"] = val
                 q = f"{validate_token_cols(col, layer)} {operator} %({prefix}_{col})s"
 
@@ -222,16 +228,8 @@ async def search(request):
                 d = ">0"
             return d
 
-        # Extract special parameters (depth and order)
+        # Extract special parameters (depth)
         depths = [depth_q(x.pop("depth")) if "depth" in x else "=1" for x in leaves]
-        root_order = (
-            to_int_or_none(root.pop("order"))
-            if type(root) == dict and "order" in root
-            else ""
-        )
-        leaf_orders = [
-            to_int_or_none(x.pop("order")) if "order" in x else "" for x in leaves
-        ]
 
         wheres = []
         this_values = {}
@@ -276,42 +274,6 @@ async def search(request):
             ]
         )
 
-        sibling_to_root_order_filter = []
-        sibling_to_sibling_order_filter = []
-
-        # Get the root order
-        for i, leaf_order in enumerate(leaf_orders):
-            if is_int(leaf_order):
-                if is_int(root_order) and leaf_order != root_order:
-                    operator = ">" if leaf_order > root_order else "<"  # type: ignore
-                    sibling_to_root_order_filter.append(f"L{i}.n {operator} Rn.n")
-
-        if sibling_to_root_order_filter:
-            sibling_to_root_order_filter = (
-                f" AND {' AND '.join(sibling_to_root_order_filter)}"
-            )
-        else:
-            sibling_to_root_order_filter = ""
-
-        for i, num1 in enumerate(leaf_orders):
-            for j, num2 in enumerate(leaf_orders[i + 1 :]):
-                if is_int(num1) and is_int(num2):
-                    if num1 < num2:  # type: ignore
-                        sibling_to_sibling_order_filter.append(
-                            f"L{i}.n < L{i + j + 1}.n"
-                        )
-                    elif num1 > num2:  # type: ignore
-                        sibling_to_sibling_order_filter.append(
-                            f"L{i}.n > L{i + j + 1}.n"
-                        )
-
-        if sibling_to_sibling_order_filter:
-            sibling_to_sibling_order_filter = (
-                f" AND {' AND '.join(sibling_to_sibling_order_filter)}"
-            )
-        else:
-            sibling_to_sibling_order_filter = ""
-
         # The following makes sure that if the leaves have the same parameters, they are all included
         # using the MySQL <> syntax (= require leaves to be different)
         require_distinct_leaves = ""
@@ -336,13 +298,11 @@ async def search(request):
             {descendant_joins}
             JOIN token_closure Rn ON R.ancestor=Rn.descendant
             WHERE R.ancestor IN ({ancestor_filter})
-            {sibling_to_root_order_filter}
             {require_distinct_leaves}
-            {sibling_to_sibling_order_filter}
             GROUP BY {group_by}
             """
         # debug(f"This tree query was built: '{sql}, values={this_values}'")
-
+        print(sql)
         closure = await db.fetch_all(sql, this_values)
         if closure["ok"]:
             # debug(
@@ -393,65 +353,39 @@ async def search(request):
         return ancestor_and_descendant_ids
     """
 
-    async def traverse(tree, ancestor_and_descendant_ids, level):
-        nonlocal n_index
-        # debug(level)
-        # debug(
-        #    f"TRAVERSING LEVEL {level}, with {len(ancestor_and_descendant_ids)} ancids"
-        # )
-        # debug(f"Entering traverse,tree={tree}")
-        # debug(f"ANCESTOR AND DESCENDANT IDS ARE NOW: \n {ancestor_and_descendant_ids}")
-        # debug("Now enumerating the subtrees")
-        for el_i, el in enumerate(tree):
-            # debug(f"Current ({el_i}th) subtree={el}, level {level}")
-            if "children" in el:
-                # debug(f'Got children. Leaves are {[x["q"] for x in el["children"]]}')
+    token_id_n_map = {}
 
+    async def traverse(tree, ancestor_and_descendant_ids, level):
+        nonlocal token_id_n_map
+
+        for el_i, el in enumerate(tree):
+            if "children" in el:
                 # NOTE: the following has str(x[el_i + 1]) because index 0 are roots;
                 # el_i + 1 is the new ancestor
-                # print(f"Now there are {len(next_ancids)} ancestor and descendant ids")
 
                 ancestor_ids = [str(x[el_i + 1]) for x in ancestor_and_descendant_ids]
-                # debug(f"{len(ancestor_ids)} ancestor ids ")
                 (
                     this_ancestor_and_descendant_ids,
                     this_ancestor_and_descendant_ns,
                 ) = await tree_query(ancestor_ids, [x["q"] for x in el["children"]])
                 if not this_ancestor_and_descendant_ids:
-                    # debug("No results!")
                     return []
 
-                # debug(f"{level+1}: {el_i}, got {this_ancestor_and_descendant_ids}\n")
-                # debug(f"{level+1}: {el_i}, ns {this_ancestor_and_descendant_ns}")
-
-                for nids_i, nids in enumerate(this_ancestor_and_descendant_ids):
-                    for nid_i, nid in enumerate(nids):
-                        if nid not in n_index:
-                            n_index[nid] = this_ancestor_and_descendant_ns[nids_i][
-                                nid_i
-                            ]
+                for r_i, taadi in enumerate(this_ancestor_and_descendant_ids):
+                    taadn = this_ancestor_and_descendant_ns[r_i]
+                    for token_id, n in zip(taadi, taadn):
+                        if token_id not in token_id_n_map:
+                            token_id_n_map[token_id] = n
 
                 this_ancestor_and_descendant_ids = await traverse(
                     el["children"], this_ancestor_and_descendant_ids, level + 1
                 )
-
-                # orders[level][el_i]["result"] = this_ancestor_orders
-
-                """
-                retained_orders = [
-                    this_ancestor_orders[i]
-                    for i, x in enumerate(ancestor_and_descendant_ids)
-                    if x[el_i + 1] in this_ancestor_ids
-                ]
-                """
 
                 """
                 The following code is important.
                 """
                 # First, get new ancestor list
                 this_ancestor_ids = [x[0] for x in this_ancestor_and_descendant_ids]
-
-                # debug(f"------ ANCESTORS ({level}): {this_ancestor_ids} ------")
 
                 # THE MAIN FILTERING CODE: retain just those ancestor_and_descendant_ids
                 # where the current ancestor (el_i + 1) was returned by the tree query
@@ -461,23 +395,17 @@ async def search(request):
                     for x in ancestor_and_descendant_ids
                     if x[el_i + 1] in this_ancestor_ids
                 ]
-                """
-                ancestor_and_descendant_ids = [
-                    x
-                    for x in ancestor_and_descendant_ids
-                    if x[el_i + 1] in this_ancestor_ids
-                ]
-                """
+        for el_i, el in enumerate(tree):
+            el["ids"] = []
+            for ids in ancestor_and_descendant_ids:
+                el["ids"].append(
+                    {
+                        "ancestor": ids[0],
+                        "descendant": ids[el_i + 1],
+                        "n": token_id_n_map[ids[el_i + 1]],
+                    }
+                )
 
-                # debug(f"{level}: {el_i}, got {ancestor_and_descendant_ids}")
-
-                # debug(
-                #    f"traverse, level {level}: ancestor_and_descendant_ids (after filtering): {len(ancestor_and_descendant_ids)}"
-                # )
-            # else:
-            #    debug(f"End of tree! {ancestor_and_descendant_ids}")
-
-        # debug(f"FINAL RETURN: level {level}, returning {ancestor_and_descendant_ids}")
         return ancestor_and_descendant_ids
 
     def get_final_sql(
@@ -541,65 +469,98 @@ async def search(request):
         else:
             debug("This is a tree search.")
 
-            # Get order relationships
-
-            print(query)
-            """
-            def extract_orders(data):
-                result = []
-                order = int(data["q"]["order"]) if "order" in data["q"] else ""
-                result.append({"order": order, "result": []})
-
-                if "children" in data:
-                    for child in data["children"]:
-                        result.append(extract_orders(child))
-
-                return result
-
-            orders = extract_orders(query)
-            """
-
-            def to_two_dimensional_list(data, level=0, result=None):
-                if result is None:
-                    result = []
-
-                # Ensure that there is a list for the current level
-                while len(result) <= level:
-                    result.append([])
-
-                # Extract the 'order' value if it exists
-                order_value = data["q"].get("order", "")
-
-                result[level].append(
-                    {"order": order_value, "result": [], "level": level, "i": 0}
-                )
-
-                children = data.get("children", [])
-                for i, child in enumerate(children):
-                    to_two_dimensional_list(child, level + 1, result)
-
-                return result
-
-            orders = to_two_dimensional_list(query)
-
-            ancestor_and_descendant_ids, ancestor_orders = await tree_query(
+            # Get initial ancestor and descendant ids
+            ancestor_and_descendant_ids, ancestor_and_descendant_ns = await tree_query(
                 query["q"], [x["q"] for x in query["children"]], 1
             )
 
-            # Traverse result will be a list of token IDs
+            for r_i, aadi in enumerate(ancestor_and_descendant_ids):
+                aadn = ancestor_and_descendant_ns[r_i]
+                for token_id, n in zip(aadi, aadn):
+                    if token_id not in token_id_n_map:
+                        token_id_n_map[token_id] = n
+
+            # Traverse result will be the filtered ancestor and descendant ids
             result = await traverse(
                 query["children"],
                 ancestor_and_descendant_ids,
                 1,
             )
+
             if not result:
                 return JSONResponse({"ok": True, "result": []})
 
-            where = f"token.id IN ({','.join([str(x[0]) for x in result])})"
+            query["ids"] = list(set([x[0] for x in result]))
+
+            def build_paths(node, current_path, paths):
+                if "children" not in node:
+                    paths.append(current_path)
+                    return
+
+                # Iterate through the children nodes
+                for child in node.get("children", []):
+                    # Iterate through the ids of the current child
+                    for id_entry in child["ids"]:
+                        # Check if the current ancestor is part of the existing path
+                        if current_path[-1]["id"] == id_entry["ancestor"]:
+                            # If so, continue building the path recursively
+                            build_paths(
+                                child,
+                                current_path
+                                + [
+                                    {
+                                        "id": id_entry["descendant"],
+                                        "order": child["q"].get("order", None),
+                                        "n": token_id_n_map[id_entry["descendant"]],
+                                    }
+                                ],
+                                paths,
+                            )
+
+            filtered_result = []
+            for root_id in query["ids"]:
+                final_paths = []
+                build_paths(
+                    query,
+                    [
+                        {
+                            "id": root_id,
+                            "order": query["q"].get("order", None),
+                            "n": token_id_n_map[root_id],
+                        }
+                    ],
+                    final_paths,
+                )
+                flattened_list = []
+
+                for sublist in final_paths:
+                    for item in sublist:
+                        if item not in flattened_list:
+                            flattened_list.append(item)
+
+                # Filter items with an "order" value
+                filtered_data = [item for item in flattened_list if item["order"]]
+                if not filtered_data or len(filtered_data) == 1:
+                    filtered_result.append(str(root_id))
+                    continue
+
+                # Sort by "order" value
+                sorted_data = sorted(filtered_data, key=lambda x: int(x["order"]))
+
+                # Check if "n" values are in the same order as "order" values
+                if all(
+                    sorted_data[i]["n"] <= sorted_data[i + 1]["n"]
+                    for i in range(len(sorted_data) - 1)
+                ):
+                    filtered_result.append(str(root_id))
+
+            if not filtered_result:
+                return JSONResponse({"ok": True, "result": {"data": []}})
+
+            # Here we use the final filtered list of root ids
+            where = f"token.id IN ({','.join(filtered_result)})"
             variation_join = ""
             rdg_join = ""
-
-            print(orders)
 
         sql = get_final_sql(
             variation_join, rdg_join, where, meta_filters, additional_filters
@@ -797,24 +758,6 @@ async def get_search_by_id(request):
 async def get_sentence_tree_json(text_id, sentence_n, layer):
     assert layer in ["orig", "reg"]
     data = await db.fetch_all(
-        """
-        SELECT id,
-               IFNULL(NULLIF(CAST(SUBSTRING(insertion_id, 1, 4) AS UNSIGNED),''), n+1) AS sorter
-          FROM token
-         WHERE text_id = %(text_id)s 
-           AND sentence_n = %(sentence_n)s 
-           AND id NOT IN
-               (SELECT descendant
-                  FROM token_closure
-                 WHERE depth > 0
-                   AND layer = %(layer)s)
-         ORDER BY sorter;
-        """,
-        {"text_id": text_id, "sentence_n": sentence_n, "layer": layer},
-    )
-    root_ids = [x["id"] for x in data["result"]]
-
-    data = await db.fetch_all(
         f"""
         SELECT token.id, 
                token.n, 
@@ -840,23 +783,6 @@ async def get_sentence_tree_json(text_id, sentence_n, layer):
     )
 
     return data
-
-    nodes = {}
-    for record in data["result"]:
-        record["children"] = []
-        record["q"] = {
-            "id": record["id"],
-            "form": record["form"],
-            "relation": record["relation"],
-        }
-        nodes[record["n"]] = record
-    for record in data["result"]:
-        head = int(record["head"] or 0)
-        if head in nodes:
-            nodes[head]["children"].append(record)
-
-    paths = [v for k, v in nodes.items() if v["id"] in root_ids]
-    return {"q": {"form": "ROOT", "relation": ""}, "children": paths}
 
 
 async def get_sentence_tree(request):
