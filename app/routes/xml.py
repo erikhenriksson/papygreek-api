@@ -338,9 +338,11 @@ async def release(request):
         mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED
     ) as zip_file:
         for t in texts["result"]:
+            file = await generate_treebank(t)
+            print(t["id"])
             zip_file.writestr(
                 f'{t["series_type"]}/{t["series_name"]}/{t["name"]}',
-                await generate_treebank(t),
+                file,
             )
 
     return Response(
