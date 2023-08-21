@@ -152,7 +152,7 @@ async def edit_sentence_annotation(request):
 
     # Add comment: text edited
     for layer in ["orig", "reg"]:
-        await comments.insert_comment(q["text_id"], request.user.id, 2, "1", layer)
+        await comments.insert_comment(q["text_id"], request.user.id, 2, "1", layer)  # type: ignore
 
     # Change status to 1 if previous status was 0 or 2
     await text.change_text_status(q["text_id"], 1, ["orig", "reg"], "0,2")

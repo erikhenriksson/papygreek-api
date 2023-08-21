@@ -56,7 +56,7 @@ async def update_bibliography():
 
 
 async def get_chapter_menu(chapter_id="NULL"):
-    assert chapter_id is "NULL" or is_int(chapter_id)
+    assert chapter_id == "NULL" or is_int(chapter_id)
     chapter_query = (
         "parent_id IS NULL" if chapter_id == "NULL" else f"id = {chapter_id}"
     )

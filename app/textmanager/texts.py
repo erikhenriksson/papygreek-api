@@ -3,194 +3,29 @@ import os
 from itertools import zip_longest
 from pprint import pprint
 from papygreektokenizer import tokenize_file, tokenize_string
+from papygreektagger import tag
 from tabulate import tabulate
 from tqdm import tqdm
 from ..config import db, IDP_PATH
 from ..routes import tokens
-from ..utils import plain, grave_to_acute
 
 
-async def TEMP_grave_to_acute():
-    result = await db.fetch_all(
+async def TEMP_autotag_all():
+    texts = await db.fetch_all(
         """
-        SELECT id,
-               orig_lemma, 
-               reg_lemma
-          FROM token
-         WHERE orig_lemma <> '' OR reg_lemma <> ''
-        """
-    )
-    for token in tqdm(result["result"]):
-        orig_lemma = grave_to_acute(token.get("orig_lemma", ""))
-        reg_lemma = grave_to_acute(token.get("reg_lemma", ""))
-        orig_lemma_plain = plain(orig_lemma)
-        reg_lemma_plain = plain(reg_lemma)
-
-        updated = await db.execute(
-            """
-            UPDATE token
-            SET orig_lemma = %s, 
-                reg_lemma = %s, 
-                orig_lemma_plain = %s, 
-                reg_lemma_plain = %s 
-            WHERE id = %s
-            """,
-            (orig_lemma, reg_lemma, orig_lemma_plain, reg_lemma_plain, token["id"]),
-        )
-        if not updated["ok"]:
-            print(f"Error with {token}")
-            print(f"{updated}")
-            exit()
-
-
-async def TEMP_migrate_to_token2_part_2():
-    result = await db.fetch_all(
-        """
-        SELECT id, 
-               name,
-               series_type,
-               xml_original, 
-               xml_papygreek,
-               v1,
-               orig_status,
-               reg_status
+        SELECT id
           FROM `text`
         """
     )
-    for text in tqdm(result["result"]):
-        if text["v1"]:
-            continue
-        if not (text["orig_status"] or text["reg_status"]):
-            tokenizer = tokenize_string(text["xml_papygreek"])
-            new_tokens = tokenizer["tokens"]()["tokens"]
-            for new_t in new_tokens:
-                res = await tokens.insert_token(new_t, text["id"])
-                if not res["ok"]:
-                    print("Could not insert token.")
-                    print(res)
-                    print(new_t)
-                    exit()
+    for text in tqdm(texts["result"]):
+        sentences = await tokens.get_text_sentences(text["id"])
 
-                if new_t["var"]:
-                    for var in new_t["var"]:
-                        rdg_result = await tokens.insert_token_rdg(var, res["result"])
-                        if not rdg_result["ok"]:
-                            print("Could not insert var.")
-                            print(rdg_result)
-                            print(var)
-                            exit()
+        if len(sentences):
+            for sentence in sentences:
+                auto_tagged = tag(sentence)
 
-
-async def TEMP_migrate_to_token2():
-    result = await db.fetch_all(
-        """
-        SELECT id, 
-               name,
-               series_type,
-               xml_original, 
-               xml_papygreek,
-               v1,
-               orig_status,
-               reg_status
-          FROM `text`
-        """
-    )
-
-    for text in tqdm(result["result"]):
-        if text["v1"]:
-            continue
-        if text["orig_status"] or text["reg_status"]:
-            tokenizer = tokenize_string(text["xml_papygreek"])
-            new_tokens = tokenizer["tokens"]()["tokens"]
-
-            old_sentences = await tokens.get_old_text_sentences(text["id"])
-            new_sentences = tokens.group_tokens_to_sentences(new_tokens)
-
-            old_sentences_artificials = []
-            old_sentences_without_artificials = []
-
-            for s in old_sentences:
-                old_sentences_without_artificials.append(
-                    [x for x in s if not tokens.is_artificial(x)]
-                )
-                old_sentences_artificials.append(
-                    [x for x in s if tokens.is_artificial(x)]
-                )
-            s_index = 0
-
-            for new_sentence, old_sentence in zip_longest(
-                new_sentences, old_sentences_without_artificials, fillvalue=[]
-            ):
-                for new_t, old_t in zip_longest(
-                    new_sentence, old_sentence, fillvalue={}
-                ):
-                    if not (
-                        new_t["n"] == old_t["n"]
-                        and new_t["sentence_n"] == old_t["sentence_n"]
-                    ):
-                        print("NOT MATCH")
-                        exit()
-                    else:
-                        new_t["reg_postag"] = old_t["reg_postag"]
-                        new_t["reg_lemma"] = old_t["reg_lemma"]
-                        new_t["reg_lemma_plain"] = plain(old_t["reg_lemma"] or "")
-                        new_t["reg_relation"] = old_t["reg_relation"]
-                        new_t["reg_head"] = old_t["reg_head"]
-                        new_t["reg_data"] = new_t["reg_data"]
-                        new_t["orig_postag"] = old_t["orig_postag"]
-                        new_t["orig_lemma"] = old_t["orig_lemma"]
-                        new_t["orig_lemma_plain"] = plain(old_t["orig_lemma"] or "")
-                        new_t["orig_relation"] = old_t["orig_relation"]
-                        new_t["orig_head"] = old_t["orig_head"]
-                        new_t["orig_data"] = new_t["orig_data"] or ""
-
-                        res = await tokens.insert_token(new_t, text["id"])
-
-                        if not res["ok"]:
-                            print("NOT INSERTED token, PRoblem")
-                            print(res)
-                            print(new_t)
-                            exit()
-
-                        if new_t["var"]:
-                            for var in new_t["var"]:
-                                rdg_result = await tokens.insert_token_rdg(
-                                    var, res["result"]
-                                )
-                                if not rdg_result["ok"]:
-                                    print("Could not insert var.")
-                                    print(rdg_result)
-                                    print(var)
-                                    exit()
-
-                for artificial in old_sentences_artificials[s_index]:
-                    artificial_template = {
-                        "orig_form": artificial["orig_form"],
-                        "reg_form": artificial["reg_form"],
-                        "n": artificial["n"],
-                        "sentence_n": s_index + 1,
-                        "artificial": artificial["artificial"],
-                        "insertion_id": artificial["insertion_id"],
-                        "orig_lemma": artificial["orig_lemma"],
-                        "orig_lemma_plain": plain(artificial["orig_lemma"] or ""),
-                        "orig_postag": artificial["orig_postag"],
-                        "orig_relation": artificial["orig_relation"],
-                        "orig_head": artificial["orig_head"],
-                        "reg_lemma": artificial["reg_lemma"],
-                        "reg_lemma_plain": plain(artificial["reg_lemma"] or ""),
-                        "reg_postag": artificial["reg_postag"],
-                        "reg_relation": artificial["reg_relation"],
-                        "reg_head": artificial["reg_head"],
-                    }
-
-                    res = await tokens.insert_token(artificial_template, text["id"])
-                    if not res["ok"]:
-                        print("Could not insert artificial.")
-                        print(res)
-                        print(artificial_template)
-                        exit()
-
-                s_index += 1
+                pprint(auto_tagged)
+                exit()
 
 
 async def tokens_have_changed(text_id, new_tokens):
@@ -788,18 +623,8 @@ async def cli(flags):
         print(result)
         exit()
 
-    if "TEMP_migrate_to_token2" in flags:
-        result = await TEMP_migrate_to_token2()
-        print(result)
-        exit()
-    if "TEMP_migrate_to_token2_part_2" in flags:
-        result = await TEMP_migrate_to_token2_part_2()
-        print(result)
-        exit()
-
-    if "TEMP_grave_to_acute" in flags:
-        result = await TEMP_grave_to_acute()
-        print(result)
+    if "TEMP_autotag" in flags:
+        result = await TEMP_autotag_all()
         exit()
 
     paths = {

@@ -15,6 +15,14 @@ from . import analyses
 from pprint import pprint
 
 
+def map_alphan_to_n(x):
+    x = list(x)
+    x[-1] = ord(x[-1]) - 96
+    x = "".join([str(y) for y in x])
+    x = to_int_or_none(x) or 0
+    return x
+
+
 def get_meta_filters(q):
     meta_filters = []
     additional_filters = ""
@@ -264,12 +272,15 @@ async def search(request):
             # debug(f"Ancestor filter is {ancestor_filter}")
 
         descendant_select = ",".join(
-            [f"L{i}.descendant as L{i}, L{i}.n as L{i}n" for i in range(len(leaves))]
+            [
+                f"L{i}.descendant as L{i}, IFNULL(NULLIF(LT{i}.insertion_id, ''), CONCAT(LPAD(LT{i}.n, 4,0), 'a')) AS L{i}n"
+                for i in range(len(leaves))
+            ]
             # [f"L{i}.descendant as L{i}" for i in range(len(leaves))]
         )
         descendant_joins = "\n".join(
             [
-                f'JOIN token_closure L{i} ON R.ancestor = L{i}.ancestor AND L{i}.depth {depths[i]} AND L{i}.descendant IN (SELECT token.id FROM token {"JOIN variation ON token.id=variation.token_id" if leafs_variation_join[i] else ""} {"JOIN token_rdg ON token_rdg.token_id=token.id" if leafs_rdg_join[i] else ""} WHERE ({x}))'
+                f'JOIN token_closure L{i} ON R.ancestor = L{i}.ancestor AND L{i}.depth {depths[i]} AND L{i}.descendant IN (SELECT token.id FROM token {"JOIN variation ON token.id=variation.token_id" if leafs_variation_join[i] else ""} {"JOIN token_rdg ON token_rdg.token_id=token.id" if leafs_rdg_join[i] else ""} WHERE ({x})) JOIN token LT{i} ON LT{i}.id = L{i}.descendant'
                 for i, x in enumerate(wheres)
             ]
         )
@@ -293,10 +304,10 @@ async def search(request):
         group_by = f"R, {descendant_groupers}" if descendant_groupers else "R"
 
         sql = f"""
-            SELECT R.ancestor as R, Rn.n as RN, {descendant_select}
+            SELECT R.ancestor as R, IFNULL(NULLIF(RT.insertion_id, ''), CONCAT(LPAD(RT.n, 4,0), 'a')) AS RN, {descendant_select}
             FROM token_closure R
             {descendant_joins}
-            JOIN token_closure Rn ON R.ancestor=Rn.descendant
+            JOIN token RT ON R.ancestor = RT.id
             WHERE R.ancestor IN ({ancestor_filter})
             {require_distinct_leaves}
             GROUP BY {group_by}
@@ -379,7 +390,7 @@ async def search(request):
 
                 this_ancestor_and_descendant_ids = await traverse(
                     el["children"], this_ancestor_and_descendant_ids, level + 1
-                )
+                )  # type: ignore
 
                 """
                 The following code is important.
@@ -454,8 +465,6 @@ async def search(request):
             GROUP BY token.id
         """
 
-    orders = []
-
     try:
         # Get the parameters as dict
         query = query_to_dict([q["q"]])[0]
@@ -485,12 +494,14 @@ async def search(request):
                 query["children"],
                 ancestor_and_descendant_ids,
                 1,
-            )
+            )  # type: ignore
 
             if not result:
                 return JSONResponse({"ok": True, "result": []})
 
             query["ids"] = list(set([x[0] for x in result]))
+
+            print(query["ids"])
 
             def build_paths(node, current_path, paths):
                 if "children" not in node:
@@ -547,9 +558,13 @@ async def search(request):
                 # Sort by "order" value
                 sorted_data = sorted(filtered_data, key=lambda x: int(x["order"]))
 
+                sorted_data = [
+                    {**d, "n2": map_alphan_to_n(d.get("n"))} for d in sorted_data
+                ]
+
                 # Check if "n" values are in the same order as "order" values
                 if all(
-                    sorted_data[i]["n"] <= sorted_data[i + 1]["n"]
+                    sorted_data[i]["n2"] <= sorted_data[i + 1]["n2"]
                     for i in range(len(sorted_data) - 1)
                 ):
                     filtered_result.append(str(root_id))

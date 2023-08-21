@@ -9,6 +9,7 @@ from . import tokens, comments, xml
 from ..config import db
 from ..textmanager import variations, closures
 from papygreektokenizer import format_token_html
+from ..utils import to_int_or_none
 
 
 async def get_text_tokens(request):
@@ -57,16 +58,36 @@ async def change_text_status(text_id, status, layers, require_prev_status=None):
         )
 
 
+async def update_text_token_confidences(text_id, column, confidence):
+    return await db.execute(
+        f"""
+        UPDATE `token` 
+           SET {column} = %s 
+         WHERE text_id = %s
+    """,
+        (confidence, text_id),
+    )
+
+
 @requires("editor")
 async def update_text_status(request):
     user = request.user
     q = await request.json()
 
     layer = q["layer"]
+    assert layer in ["orig", "reg"]
     text_id = q["text_id"]
     status = q["status"]
     await change_text_status(text_id, status, [layer])
-    await comments.insert_comment(text_id, user.id, 2, status, layer)
+    await comments.insert_comment(text_id, user.id, 2, status, layer)  # type: ignore
+
+    # If submitted or accepted, let's mark the postags as manually annotated (confidence 1.0)
+    if to_int_or_none(status) in [6, 3]:
+        updated_confidence = await update_text_token_confidences(
+            text_id, f"{layer}_postag_confidence", 1
+        )  # type: ignore
+        if not updated_confidence["ok"]:
+            return updated_confidence
 
     return JSONResponse({"ok": True})
 

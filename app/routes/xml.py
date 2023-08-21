@@ -65,7 +65,7 @@ async def get_aows(tokens, text_id):
 
     for token in tokens:
         if "hand" in token and token["hand"] and token["hand"] != "None":
-            aow_data = await get_aow_data(text_id, h_n)
+            aow_data = await get_aow_data(text_id, h_n)  # type: ignore
 
             if token["hand"] != h:
                 aows.append(

@@ -268,7 +268,7 @@ async def save_layer(request):
                 else:
                     arethusa_existing_tokens.append(token_dict)
 
-    old_tokens = await get_tokens_by_text(text_id)
+    old_tokens = await get_tokens_by_text(text_id)  # type: ignore
     arethusa_artificials_with_id = set(
         [
             int(x["pg_id"])
@@ -289,15 +289,15 @@ async def save_layer(request):
     )
 
     for art_id in deleted_artificials:
-        await delete_artificial(art_id)
+        await delete_artificial(art_id)  # type: ignore
 
     for token in arethusa_existing_tokens:
-        await update_token_annotation(layer, token)
+        await update_token_annotation(layer, token)  # type: ignore
 
     for token in arethusa_new_artificials:
-        await insert_artificial(text_id, layer, token)
+        await insert_artificial(text_id, layer, token)  # type: ignore
 
-    await insert_comment(text_id, user.id, 2, "1", layer)
+    await insert_comment(text_id, user.id, 2, "1", layer)  # type: ignore
     await change_text_status(text_id, 1, [layer], "0,2")
 
     return JSONResponse({"ok": True})
@@ -310,7 +310,7 @@ async def save_layer_comment(request):
     layer = request.path_params["layer"]
     body = await request.json()
 
-    comment_id = await insert_comment(text_id, user.id, 3, body["comment"], layer)
+    comment_id = await insert_comment(text_id, user.id, 3, body["comment"], layer)  # type: ignore
 
     if comment_id["ok"]:
         comment_formatted = await get_comment(comment_id["result"])
