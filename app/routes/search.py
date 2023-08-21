@@ -313,7 +313,7 @@ async def search(request):
             GROUP BY {group_by}
             """
         # debug(f"This tree query was built: '{sql}, values={this_values}'")
-        print(sql)
+        # print(sql)
         closure = await db.fetch_all(sql, this_values)
         if closure["ok"]:
             # debug(
@@ -501,7 +501,7 @@ async def search(request):
 
             query["ids"] = list(set([x[0] for x in result]))
 
-            print(query["ids"])
+            # print(query["ids"])
 
             def build_paths(node, current_path, paths):
                 if "children" not in node:
