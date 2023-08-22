@@ -13,8 +13,14 @@ from ..routes import tokens
 async def TEMP_autotag_all():
     texts = await db.fetch_all(
         """
-        SELECT id
-          FROM `text`
+        SELECT * 
+          FROM `text` 
+         WHERE (orig_status IS NULL 
+            OR orig_status = 0
+            OR orig_status = '') 
+           AND (reg_status IS NULL 
+            OR reg_status = 0
+            OR reg_status = '');
         """
     )
     for text in tqdm(texts["result"]):
@@ -24,7 +30,7 @@ async def TEMP_autotag_all():
             for sentence in sentences:
                 auto_tagged = tag(sentence)
 
-                pprint(auto_tagged)
+                print(auto_tagged)
                 exit()
 
 

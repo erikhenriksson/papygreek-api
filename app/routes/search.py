@@ -172,7 +172,14 @@ async def search(request):
         def validate_token_cols(column, layer):
             if column == "form":
                 column = f"{layer}_plain"
-            elif column in ["postag", "relation", "head", "lemma", "lemma_plain"]:
+            elif column in [
+                "postag",
+                "postag_confidence",
+                "relation",
+                "head",
+                "lemma",
+                "lemma_plain",
+            ]:
                 column = f"{layer}_{column}"
             elif column in ["text_id", "*"]:
                 column = column
@@ -195,6 +202,16 @@ async def search(request):
         for col, val in query.items():
             operator = "REGEXP" if len(col.split("regex:")) == 2 else "LIKE"
             col = col.split("regex:")[-1]
+
+            if "confidence" in col:
+                if "<" in val:
+                    operator = "<"
+                elif ">" in val:
+                    operator = ">"
+                else:
+                    operator = "="
+
+                val = val.replace("<", "").replace(">", "")
 
             if col == "form" and ("<" in val or ">" in val or "+" in val or "-" in val):
                 variation_query = get_variation_query(val)
@@ -440,11 +457,13 @@ async def search(request):
                 token.orig_form, 
                 token.orig_lemma, 
                 token.orig_postag, 
+                token.orig_postag_confidence,
                 token.orig_relation, 
                 token.orig_head, 
                 token.reg_form, 
                 token.reg_lemma,
                 token.reg_postag, 
+                token.reg_postag_confidence,
                 token.reg_relation, 
                 token.reg_head, 
                 artificial,
