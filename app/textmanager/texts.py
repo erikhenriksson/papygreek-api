@@ -7,7 +7,7 @@ from papygreektagger import tag
 from tabulate import tabulate
 from tqdm import tqdm
 from ..config import db, IDP_PATH
-from ..routes import tokens
+from ..routes import tokens, morpheus
 
 
 async def TEMP_autotag_all():
@@ -16,10 +16,10 @@ async def TEMP_autotag_all():
         SELECT * 
           FROM `text` 
          WHERE (orig_status IS NULL 
-            OR orig_status = 0
+            OR orig_status = 1
             OR orig_status = '') 
            AND (reg_status IS NULL 
-            OR reg_status = 0
+            OR reg_status = 1
             OR reg_status = '');
         """
     )
@@ -28,9 +28,65 @@ async def TEMP_autotag_all():
 
         if len(sentences):
             for sentence in sentences:
-                auto_tagged = tag(sentence)
+                await autotag(sentence)
 
-                print(auto_tagged)
+
+async def autotag(sentence, overwrite=False):
+    sentence = [
+        {
+            **t,
+            "orig_postag_before": t.get("orig_postag"),
+            "reg_postag_before": t.get("reg_postag"),
+            "orig_lemma_before": t.get("orig_lemma"),
+            "reg_lemma_before": t.get("reg_lemma"),
+        }
+        for t in sentence
+    ]
+    auto_tagged = tag(sentence)
+
+    for token in auto_tagged:
+        values = {}
+        update_sql = []
+        if (
+            not token.get("orig_postag_before") and not token.get("orig_lemma_before")
+        ) or overwrite:
+            update_sql.append(f"orig_postag = %(orig_postag)s")
+            update_sql.append(f"orig_postag_confidence = %(orig_postag_confidence)s")
+            update_sql.append(f"orig_lemma = %(orig_lemma)s")
+            update_sql.append(f"orig_lemma_plain = %(orig_lemma_plain)s")
+            values["orig_postag"] = token["orig_postag"]
+            values["orig_postag_confidence"] = token["orig_postag_confidence"]
+            orig_lemma = await morpheus.lemmatize(
+                token["orig_form"], token["orig_postag"]
+            )
+            values["orig_lemma"] = orig_lemma["lemma"]
+            values["orig_lemma_plain"] = orig_lemma["lemma_plain"]
+
+        if (
+            not token.get("reg_postag_before") and not token.get("reg_lemma_before")
+        ) or overwrite:
+            update_sql.append(f"reg_postag = %(reg_postag)s")
+            update_sql.append(f"reg_postag_confidence = %(reg_postag_confidence)s")
+            update_sql.append(f"reg_lemma = %(reg_lemma)s")
+            update_sql.append(f"reg_lemma_plain = %(reg_lemma_plain)s")
+            values["reg_postag"] = token["reg_postag"]
+            values["reg_postag_confidence"] = token["reg_postag_confidence"]
+            reg_lemma = await morpheus.lemmatize(token["reg_form"], token["reg_postag"])
+            values["reg_lemma"] = reg_lemma["lemma"]
+            values["reg_lemma_plain"] = reg_lemma["lemma_plain"]
+
+        if update_sql:
+            values["id"] = token["id"]
+            result = await db.execute(
+                f"""
+                UPDATE `token`
+                SET {', '.join(update_sql)}
+                WHERE id = %(id)s
+                """,
+                (values),
+            )
+            if not result["ok"]:
+                print(result)
                 exit()
 
 

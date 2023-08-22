@@ -549,3 +549,17 @@ CREATE TABLE IF NOT EXISTS `chapter_old_md` (
         ON DELETE CASCADE,
     FOREIGN KEY (`user_id`) REFERENCES `user` (`id`)
 );
+
+CREATE TABLE IF NOT EXISTS `morpheus` (
+    `id`           INT unsigned NOT NULL AUTO_INCREMENT,
+    `form`         VARCHAR(512),
+    `form_plain`   VARCHAR(512),
+    `lemma`        VARCHAR(512),
+    `lemma_plain`  VARCHAR(512),
+    `postag`       VARCHAR(80),
+    --
+    PRIMARY KEY (`id`),
+    KEY (`form`(80)),
+    KEY (`form_plain`(80)),
+    KEY (`postag`(80))
+);

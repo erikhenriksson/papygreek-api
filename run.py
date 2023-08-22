@@ -4,7 +4,7 @@ import asyncio
 import uvicorn
 from starlette.config import Config
 
-from app.textmanager import texts, variations, closures, backup
+from app.textmanager import texts, variations, closures, backup, morpheus
 from app.config import db
 
 env = Config(".env")
@@ -39,4 +39,6 @@ if __name__ == "__main__":
             loop.run_until_complete(closures.cli())
         elif sys.argv[1] == "backup_database":
             loop.run_until_complete(backup.cli())
+        elif sys.argv[1] == "index_morpheus":
+            loop.run_until_complete(morpheus.cli())
         loop.run_until_complete(db.disconnect())

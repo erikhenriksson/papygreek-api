@@ -18,5 +18,6 @@ BACKUP_DIR = env("BACKUP_DIR", default="~/backups")
 ZOTERO_URL = env("ZOTERO_URL")
 SMYTH_PATH = env("SMYTH_PATH")
 IDP_PATH = env("IDP_PATH")
+MORPHEUS_PATH = env("MORPHEUS_PATH")
 
 db = db()
