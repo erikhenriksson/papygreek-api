@@ -28,8 +28,9 @@ async def TEMP_autotag_all():
         sentences = await tokens.get_text_sentences(text["id"])
 
         if len(sentences):
-            for sentence in sentences:
-                await autotag(sentence)
+            for si, sentence in enumerate(sentences):
+                reload_model = False if si > 0 else True
+                await autotag(sentence, reload_model)
 
         updated = await db.execute(
             """
@@ -37,7 +38,7 @@ async def TEMP_autotag_all():
             SET auto_tagged = NOW()
             WHERE id = %(id)s
             """,
-            ({'id': text["id"]}),
+            ({"id": text["id"]}),
         )
 
         if not updated["ok"]:
