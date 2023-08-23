@@ -20,7 +20,8 @@ async def TEMP_autotag_all():
             OR orig_status = '') 
            AND (reg_status IS NULL 
             OR reg_status = 1
-            OR reg_status = '');
+            OR reg_status = '')
+           AND auto_tagged IS NULL
         """
     )
     for text in tqdm(texts["result"]):
@@ -29,6 +30,19 @@ async def TEMP_autotag_all():
         if len(sentences):
             for sentence in sentences:
                 await autotag(sentence)
+
+        updated = await db.execute(
+            """
+            UPDATE `text`
+            SET auto_tagged = NOW()
+            WHERE id = %(s)s
+            """,
+            (text["id"]),
+        )
+
+        if not updated["ok"]:
+            print(updated)
+            exit()
 
 
 async def autotag(sentence, overwrite=False):

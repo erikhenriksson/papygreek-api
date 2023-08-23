@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS `text` (
     `reg_status`      TINYINT unsigned DEFAULT 0 NOT NULL,
     `current`         TINYINT unsigned DEFAULT 1 NOT NULL,
     `v1`              TINYINT unsigned DEFAULT 0 NOT NULL,
+    `auto_tagged`     TIMESTAMP DEFAULT NULL,
     --
     PRIMARY KEY (`id`),
     UNIQUE (`name`, `series_name`),
@@ -53,7 +54,8 @@ CREATE TABLE IF NOT EXISTS `text` (
     KEY (`reg_status`),
     KEY (`orig_status`, `reg_status`),
     KEY (`current`),
-    KEY (`series_type`, `series_name`)
+    KEY (`series_type`, `series_name`),
+    KEY (`auto_tagged`)
 );
 
 CREATE TABLE IF NOT EXISTS `treebank_backup` (
