@@ -29,7 +29,7 @@ async def TEMP_autotag_all():
 
         if len(sentences):
             for si, sentence in enumerate(sentences):
-                reload_model = False if si > 0 else True
+                reload_model = True if si == 0 else False
                 await autotag(sentence, reload_model)
 
         updated = await db.execute(
