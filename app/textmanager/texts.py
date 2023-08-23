@@ -35,9 +35,9 @@ async def TEMP_autotag_all():
             """
             UPDATE `text`
             SET auto_tagged = NOW()
-            WHERE id = %(s)s
+            WHERE id = %(id)s
             """,
-            (text["id"]),
+            ({'id': text["id"]}),
         )
 
         if not updated["ok"]:
