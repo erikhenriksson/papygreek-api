@@ -7,10 +7,48 @@ import base64
 
 from .search import get_sentence_tree_json
 from starlette.routing import Route
-from ..config import db
+from ..config import db, GRAMMAR_GITHUB_REPO, GRAMMAR_GITHUB_TOKEN
 from ..response import JSONResponse
 from ..utils import is_int
 from starlette.authentication import requires
+
+import github
+from github import Auth
+
+
+def github_connect():
+    auth = Auth.Token(GRAMMAR_GITHUB_TOKEN)
+    g = github.Github(auth=auth)
+    return g.get_user().get_repo(GRAMMAR_GITHUB_REPO)
+
+
+def github_action(action, user_name, chapter_id, new_contents="", title=""):
+    repo = github_connect()
+    result = {"commit": None}
+    file_path = None
+    contents = repo.get_contents("")
+    for content_file in contents:  # type: ignore
+        path = content_file.path
+        if f"[{chapter_id}]" in path:
+            file_path = path
+
+    if file_path:
+        contents = repo.get_contents(file_path)
+        if action == "save":
+            result = repo.update_file(file_path, f"{user_name} updated {file_path}", new_contents, contents.sha)  # type: ignore
+        elif action == "delete":
+            result = repo.delete_file(file_path, f"{user_name} deleted {file_path}", contents.sha)  # type: ignore
+    else:
+        if action == "save":
+            file_path = f"{title} [{chapter_id}]"
+            result = repo.create_file(
+                file_path,
+                f"{user_name} created {file_path}",
+                new_contents,
+            )
+    if "commit" in result:
+        return {"ok": 1}
+    return {"ok": 0, "result": result}
 
 
 def synchronize_async_helper(to_await):
@@ -55,7 +93,7 @@ async def update_bibliography():
     )
 
 
-async def get_chapter_menu(chapter_id="NULL"):
+async def get_chapter_menu(chapter_id="NULL", table="chapter"):
     assert chapter_id == "NULL" or is_int(chapter_id)
     chapter_query = (
         "parent_id IS NULL" if chapter_id == "NULL" else f"id = {chapter_id}"
@@ -70,22 +108,22 @@ async def get_chapter_menu(chapter_id="NULL"):
                      CAST('' AS CHAR(1000)) AS path,
                      0 AS level,
                      IF(title = 'Bibliography', 1, 0) AS bib
-                FROM chapter
+                FROM {table}
                WHERE {chapter_query}
               
                UNION ALL
                 
-              SELECT chapter.id,
-                     chapter.title,
-                     chapter.parent_id,
-                     chapter.seq,
-                     concat(cte.path, '.', CAST(chapter.seq AS CHAR(1000))),
+              SELECT {table}.id,
+                     {table}.title,
+                     {table}.parent_id,
+                     {table}.seq,
+                     concat(cte.path, '.', CAST({table}.seq AS CHAR(1000))),
                      cte.level + 1,
-                     IF(chapter.title = 'Bibliography', 1, 0)
+                     IF({table}.title = 'Bibliography', 1, 0)
                 
                 FROM cte
-                     JOIN chapter 
-                     ON chapter.parent_id = cte.id)
+                     JOIN {table} 
+                     ON {table}.parent_id = cte.id)
 
         SELECT id, 
                title, 
@@ -215,14 +253,14 @@ async def mdtohtml(md, chapter_id, path):
         return html
 
 
-async def get_numbered_path(text_id):
+async def get_numbered_path(text_id, table="chapter"):
     result = await db.fetch_all(
-        """
+        f"""
         WITH RECURSIVE cte AS 
              (SELECT id, 
                      parent_id, 
                      seq
-                FROM chapter
+                FROM {table}
                WHERE id = %(text_id)s
 
                UNION ALL
@@ -230,7 +268,7 @@ async def get_numbered_path(text_id):
               SELECT m.id, 
                      m.parent_id, 
                      m.seq
-                FROM chapter AS m
+                FROM {table} AS m
                      INNER JOIN cte AS p 
                      ON m.id = p.parent_id
                WHERE m.id <> m.parent_id)
@@ -258,7 +296,9 @@ async def get_numbered_path(text_id):
 
 
 async def get_menu(request):
-    return JSONResponse(await get_chapter_menu())
+    q = await request.json()
+    table = "chapter" if q["edit"] else "chapter_release"
+    return JSONResponse(await get_chapter_menu("NULL", table))
 
 
 @requires("editor")
@@ -298,7 +338,17 @@ async def update_chapter(request):
 
     await update_bibliography()
 
-    return JSONResponse(result)
+    if not result["ok"]:
+        return JSONResponse(result)
+
+    path = await get_numbered_path(q["id"])
+    html_title = f"{path} {title}"
+    html = f"<h1>{html_title}</h1>\n" + chapter
+    github_result = github_action(
+        "save", request.user.name, chapter_id, html, html_title
+    )
+
+    return JSONResponse(github_result)
 
 
 @requires("editor")
@@ -312,7 +362,21 @@ async def add_chapter(request):
     """
     )
 
+    if not insert_id["ok"]:
+        return JSONResponse(insert_id)
+
     await update_bibliography()
+
+    github_result = github_action(
+        "save",
+        request.user.name,
+        insert_id["result"],
+        "<p>Chapter text</p>",
+        "A New Chapter",
+    )
+
+    if not github_result["ok"]:
+        return JSONResponse(github_result)
 
     return JSONResponse(insert_id)
 
@@ -330,25 +394,38 @@ async def delete_chapter(request):
         (chapter_id,),
     )
 
+    if not deleted["ok"]:
+        return JSONResponse(deleted)
+
     await update_bibliography()
+
+    github_result = github_action("delete", request.user.name, chapter_id)
+
+    if not github_result["ok"]:
+        return JSONResponse(github_result)
 
     return JSONResponse(deleted)
 
 
 async def get_chapter_by_id(request):
+    q = await request.json()
+    table = "chapter" if q["edit"] else "chapter_release"
     result = await db.fetch_one(
-        """
+        f"""
         SELECT id, 
                title, 
                seq, 
                md, 
                html, 
                parent_id 
-          FROM chapter 
+          FROM {table} 
          WHERE id = %(id)s
     """,
         request.path_params,
     )
+
+    if not result["result"]:
+        result["result"] = {}
 
     path = await get_numbered_path(request.path_params["id"])
 
@@ -357,12 +434,65 @@ async def get_chapter_by_id(request):
     return JSONResponse(result)
 
 
+@requires("editor")
+async def release(request):
+    q = await request.json()
+    version = (q["version"] or "").strip()
+    truncated_release = await db.execute(
+        """
+        TRUNCATE chapter_release
+        """,
+    )
+
+    if not truncated_release["ok"]:
+        return JSONResponse(truncated_release)
+
+    released = await db.execute(
+        """
+        INSERT INTO chapter_release (id, parent_id, title, seq, md, html, version)
+        SELECT id, parent_id, title, seq, md, html, %(version)s
+        FROM chapter
+        """,
+        ({"version": version}),
+    )
+
+    return JSONResponse(released)
+
+
+@requires("editor")
+async def update_citation(request):
+    q = await request.json()
+    result = await db.execute(
+        """
+        INSERT INTO citation (id, `text`) 
+        VALUES (1, %(txt)s) 
+        ON DUPLICATE KEY UPDATE `text` = %(txt)s
+        """,
+        {"txt": q["txt"]},
+    )
+
+    return JSONResponse(result)
+
+
+async def get_citation(request):
+    citation = await db.fetch_one(
+        """
+        SELECT `text`
+          FROM citation
+        """
+    )
+    return JSONResponse(citation)
+
+
 routes = [
-    Route("/{id:int}", get_chapter_by_id),
+    Route("/{id:int}", get_chapter_by_id, methods=["POST"]),
     Route("/add", add_chapter, methods=["POST"]),
     Route("/mdtohtml", convert_md_to_html, methods=["POST"]),
     Route("/save", update_chapter, methods=["POST"]),
     Route("/add", add_chapter),
     Route("/delete", delete_chapter, methods=["POST"]),
-    Route("/get_menu", get_menu),
+    Route("/release", release, methods=["POST"]),
+    Route("/get_menu", get_menu, methods=["POST"]),
+    Route("/update_citation_text", update_citation, methods=["POST"]),
+    Route("/get_citation_text", get_citation),
 ]

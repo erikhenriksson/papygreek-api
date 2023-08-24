@@ -520,6 +520,13 @@ CREATE TABLE IF NOT EXISTS `bibliography` (
     PRIMARY KEY (`id`)
 );
 
+CREATE TABLE IF NOT EXISTS `citation` (
+    `id`           INT unsigned NOT NULL AUTO_INCREMENT,
+    `text`         MEDIUMTEXT DEFAULT NULL,
+    --
+    PRIMARY KEY (`id`)
+);
+
 CREATE TABLE IF NOT EXISTS `chapter` (
     `id`           INT unsigned NOT NULL AUTO_INCREMENT,
     `parent_id`    INT unsigned DEFAULT NULL,
@@ -533,6 +540,21 @@ CREATE TABLE IF NOT EXISTS `chapter` (
     KEY (`seq`),
     FOREIGN KEY (`parent_id`) REFERENCES `chapter` (`id`)
 );
+
+CREATE TABLE IF NOT EXISTS `chapter_release` (
+    `id`           INT unsigned NOT NULL AUTO_INCREMENT,
+    `parent_id`    INT unsigned DEFAULT NULL,
+    `title`        VARCHAR(512),
+    `seq`          SMALLINT unsigned DEFAULT 1,
+    `md`           MEDIUMTEXT DEFAULT NULL,
+    `html`         MEDIUMTEXT DEFAULT NULL,
+    `version`      VARCHAR(80),
+    --
+    PRIMARY KEY (`id`),
+    KEY (`seq`),
+    FOREIGN KEY (`parent_id`) REFERENCES `chapter` (`id`)
+);
+
 
 INSERT INTO `chapter` (`parent_id`, `seq`, `title`, `md`, `html`) VALUES (NULL, '1', 'A Grammar of Documentary Greek', 'Welcome!', '<p>Welcome!</p>');
 INSERT INTO `chapter` (`parent_id`, `seq`, `title`, `md`, `html`) VALUES (NULL, '2', 'Abbreviations', 'Text here', '<p>Text here</p>');

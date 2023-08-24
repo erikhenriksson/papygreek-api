@@ -128,14 +128,12 @@ async def search(request):
     # Get metadata filters
     meta_filters, additional_filters, values = get_meta_filters(q)
 
-    n_index = {}
-
-    result_nodes = set()
+    # This will be globally changed to True if this is an annotated search,
+    # it will be used later to filter out incomplete texts
+    searching_annotated_texts = False
 
     def get_leaf_query(query, values, prefix="root"):
-        # debug(
-        #    f"Entering get_leaf_query, query={query}, values={values}, prefix={prefix}"
-        # )
+        nonlocal searching_annotated_texts
 
         def get_variation_query(var_query_string):
             ret = {
@@ -170,8 +168,11 @@ async def search(request):
             }
 
         def validate_token_cols(column, layer):
+            nonlocal searching_annotated_texts
             if column == "form":
                 column = f"{layer}_plain"
+            elif column == "form_full":
+                column = f"{layer}_form_unformatted"
             elif column in [
                 "postag",
                 "postag_confidence",
@@ -181,6 +182,7 @@ async def search(request):
                 "lemma_plain",
             ]:
                 column = f"{layer}_{column}"
+                searching_annotated_texts = True
             elif column in ["text_id", "*"]:
                 column = column
             else:
@@ -352,35 +354,6 @@ async def search(request):
         # debug("")
         return closure, closure_orders
 
-    """
-    async def traverse(tree, ancestor_and_descendant_ids, level):
-
-        for el_i, el in enumerate(tree):
-            if not "children" in el:
-                level -= 1
-                return ancestor_and_descendant_ids
-            else:
-                ancestor_ids = [str(x[el_i + 1]) for x in ancestor_and_descendant_ids]
-                this_ancestor_and_descendant_ids, _ = await tree_query(
-                    ancestor_ids, [x["q"] for x in el["children"]]
-                )
-                if not this_ancestor_and_descendant_ids:
-                    return []
-
-                ancestor_and_descendant_ids = await traverse(
-                    el["children"], this_ancestor_and_descendant_ids, level + 1
-                )
-
-                this_ancestor_ids = [x[0] for x in this_ancestor_and_descendant_ids]
-                ancestor_and_descendant_ids = [
-                    x
-                    for x in ancestor_and_descendant_ids
-                    if x[el_i + 1] in this_ancestor_ids
-                ]
-
-        return ancestor_and_descendant_ids
-    """
-
     token_id_n_map = {}
 
     async def traverse(tree, ancestor_and_descendant_ids, level):
@@ -437,10 +410,25 @@ async def search(request):
         return ancestor_and_descendant_ids
 
     def get_final_sql(
-        variation_join, rdg_join, where, meta_filters, additional_filters
+        variation_join,
+        rdg_join,
+        where,
+        meta_filters,
+        additional_filters,
     ):
         if variation_join:
             variation_join = "INNER JOIN variation ON variation.token_id = token.id"
+        if searching_annotated_texts:
+            filter_to_finalized_or_immaculate = """
+                AND (
+                    (text.orig_status = 3 AND text.reg_status = 3)
+                OR (text.orig_status = 3 AND (text.reg_status IS NULL or text.reg_status = 0))
+                OR (text.reg_status = 3 AND (text.orig_status IS NULL or text.orig_status = 0))
+                OR ((text.orig_status IS NULL or text.orig_status = 0) AND (text.reg_status IS NULL or text.reg_status = 0))
+                )
+            """
+        else:
+            filter_to_finalized_or_immaculate = ""
         return f"""
             SELECT 
                 token.text_id, 
@@ -481,12 +469,14 @@ async def search(request):
             WHERE {where}
             {("AND " + " AND ".join(meta_filters)) if meta_filters else ""}
             {additional_filters}
+            {filter_to_finalized_or_immaculate}
             GROUP BY token.id
         """
 
     try:
         # Get the parameters as dict
         query = query_to_dict([q["q"]])[0]
+
         # Plain search (non-recursive)
         if not "children" in query:
             where, values, variation_join, rdg_join = get_leaf_query(
@@ -496,6 +486,7 @@ async def search(request):
         # Tree search (recursive)
         else:
             debug("This is a tree search.")
+            searching_annotated_texts = True
 
             # Get initial ancestor and descendant ids
             ancestor_and_descendant_ids, ancestor_and_descendant_ns = await tree_query(
