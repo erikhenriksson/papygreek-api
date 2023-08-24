@@ -19,7 +19,7 @@ from github import Auth
 def github_connect():
     auth = Auth.Token(GRAMMAR_GITHUB_TOKEN)
     g = github.Github(auth=auth)
-    return g.get_user().get_repo(GRAMMAR_GITHUB_REPO)
+    return g.get_organization("papygreek").get_repo(GRAMMAR_GITHUB_REPO)
 
 
 def github_action(action, user_name, chapter_id, new_contents="", title=""):
