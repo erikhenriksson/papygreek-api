@@ -25,13 +25,13 @@ async def TEMP_autotag_all():
         """
     )
     for text in tqdm(texts["result"]):
-        print(text["id"])
         sentences = await tokens.get_text_sentences(text["id"])
 
         if len(sentences):
             for si, sentence in enumerate(sentences):
-                reload_model = True if si == 0 else False
-                await autotag(sentence, reload_model)
+                if len(sentence) <= 512:
+                    reload_model = True if si == 0 else False
+                    await autotag(sentence, reload_model)
 
         updated = await db.execute(
             """
