@@ -35,15 +35,15 @@ def github_action(action, user_name, chapter_id, new_contents="", title=""):
     if file_path:
         contents = repo.get_contents(file_path)
         if action == "save":
-            result = repo.update_file(file_path, f"{user_name} updated {file_path}", new_contents, contents.sha)  # type: ignore
+            result = repo.update_file(file_path, f"updated {file_path}", new_contents, contents.sha)  # type: ignore
         elif action == "delete":
-            result = repo.delete_file(file_path, f"{user_name} deleted {file_path}", contents.sha)  # type: ignore
+            result = repo.delete_file(file_path, f"deleted {file_path}", contents.sha)  # type: ignore
     else:
         if action == "save":
             file_path = f"{title} [{chapter_id}]"
             result = repo.create_file(
                 file_path,
-                f"{user_name} created {file_path}",
+                f"created {file_path}",
                 new_contents,
             )
     if "commit" in result:

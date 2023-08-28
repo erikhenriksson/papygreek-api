@@ -1,6 +1,7 @@
 import json
 import traceback
 import time
+import base64
 
 from unicodedata import normalize
 
@@ -812,11 +813,21 @@ async def get_sentence_tree_json(text_id, sentence_n, layer):
 
 async def get_sentence_tree(request):
     q = await request.json()
-    text_id = q["text_id"]
-    sentence_n = q["sentence_n"]
+    doc_id = q["text_id"]
+    sentence_id = q["sentence_n"]
     layer = q["layer"]
-    json = await get_sentence_tree_json(text_id, sentence_n, layer)
-    return JSONResponse({"ok": True, "result": json})
+    token_id = q["token_id"]
+
+    result = await get_sentence_tree_json(doc_id, sentence_id, layer)
+    if not result["ok"]:
+        return result
+
+    result["highlight_nodes"] = token_id
+    result["id"] = "0"
+
+    b = base64.b64encode(json.dumps(result).encode("utf-8")).decode("utf-8")
+    html = f'<div style="height:300px; " data-treeid="0" class="sentence-tree tf-tree tf-result" data-json="{b}"></div>'
+    return JSONResponse({"ok": True, "result": html})
 
 
 routes = [

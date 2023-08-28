@@ -25,6 +25,7 @@ async def TEMP_autotag_all():
         """
     )
     for text in tqdm(texts["result"]):
+        print(text["id"])
         sentences = await tokens.get_text_sentences(text["id"])
 
         if len(sentences):
