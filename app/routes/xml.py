@@ -60,14 +60,13 @@ async def get_aow_data(text_id, aow_n):
 
 async def get_aows(tokens, text_id):
     h = ""
-    h_n = 0
+    h_n = 1
     aows = []
 
     for token in tokens:
         if "hand" in token and token["hand"] and token["hand"] != "None":
-            aow_data = await get_aow_data(text_id, h_n)  # type: ignore
-
             if token["hand"] != h:
+                aow_data = await get_aow_data(text_id, h_n)  # type: ignore
                 aows.append(
                     {
                         "name": token["hand"],
