@@ -813,6 +813,7 @@ async def get_sentence_tree_json(text_id, sentence_n, layer):
 
 async def get_sentence_tree(request):
     q = await request.json()
+    print(q)
     doc_id = q["text_id"]
     sentence_id = q["sentence_n"]
     layer = q["layer"]
@@ -823,6 +824,7 @@ async def get_sentence_tree(request):
         return result
 
     result["highlight_nodes"] = token_id
+    result["highlight_edges"] = ""
     result["id"] = "0"
 
     b = base64.b64encode(json.dumps(result).encode("utf-8")).decode("utf-8")
