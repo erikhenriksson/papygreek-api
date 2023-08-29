@@ -30,8 +30,11 @@ async def TEMP_autotag_all():
         if len(sentences):
             for si, sentence in enumerate(sentences):
                 if len(sentence) <= 512:
+                    print(f'{text["id"]}-{si} [{len(sentence)} tokens]')
                     reload_model = True if si == 0 else False
                     await autotag(sentence, reload_model)
+                else:
+                    print(f'{text["id"]}-{si} [skipping!]')
 
         updated = await db.execute(
             """
