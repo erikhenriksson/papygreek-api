@@ -93,9 +93,6 @@ def get_meta_filters(q):
         additional_filters += " AND text.series_type = %(series_type)s"
         values["series_type"] = q["series-type"].strip()
 
-    # if q["regularization"]:
-    #    additional_filters += " AND variation.regularization = 1"
-
     return meta_filters, additional_filters, values
 
 
@@ -418,7 +415,7 @@ async def search(request):
         additional_filters,
     ):
         if variation_join:
-            variation_join = "INNER JOIN variation ON variation.token_id = token.id"
+            variation_join = "INNER JOIN variation ON variation.token_id = token.id AND variation.regularization=1"
         if searching_annotated_texts:
             filter_to_finalized_or_immaculate = """
                 AND (
