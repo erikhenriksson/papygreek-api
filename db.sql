@@ -532,6 +532,7 @@ CREATE TABLE IF NOT EXISTS `chapter` (
     `parent_id`    INT unsigned DEFAULT NULL,
     `title`        VARCHAR(512),
     `seq`          SMALLINT unsigned DEFAULT 1,
+    `author`       VARCHAR(512) NOT NULL DEFAULT '',
     `md`           MEDIUMTEXT DEFAULT NULL,
     `html`         MEDIUMTEXT DEFAULT NULL,
     `created`      TIMESTAMP DEFAULT NOW() ON UPDATE CURRENT_TIMESTAMP,
@@ -546,8 +547,10 @@ CREATE TABLE IF NOT EXISTS `chapter_release` (
     `parent_id`    INT unsigned DEFAULT NULL,
     `title`        VARCHAR(512),
     `seq`          SMALLINT unsigned DEFAULT 1,
+    `author`       VARCHAR(512) NOT NULL DEFAULT '',
     `md`           MEDIUMTEXT DEFAULT NULL,
     `html`         MEDIUMTEXT DEFAULT NULL,
+    `created`      `created` TIMESTAMP on update CURRENT_TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `version`      VARCHAR(80),
     --
     PRIMARY KEY (`id`),

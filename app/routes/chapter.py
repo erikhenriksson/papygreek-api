@@ -313,6 +313,7 @@ async def update_chapter(request):
     md = (q["md"] or "").strip()
     chapter = (q["html"] or "").strip()
     chapter_id = q["id"]
+    author = q["author"]
     title = (q["title"] or "").strip()
     seq = q["seq"]
     parent_id = q["parent_id"] or None
@@ -322,6 +323,7 @@ async def update_chapter(request):
             SET title = %(title)s, 
                 md = %(md)s, 
                 html = %(html)s, 
+                author = %(author)s, 
                 seq = %(seq)s, 
                 parent_id = %(parent_id)s 
             WHERE id = %(chapter_id)s
@@ -329,6 +331,7 @@ async def update_chapter(request):
         {
             "md": md,
             "html": chapter,
+            "author": author,
             "title": title,
             "chapter_id": chapter_id,
             "seq": seq,
@@ -416,13 +419,17 @@ async def get_chapter_by_id(request):
                title, 
                seq, 
                md, 
+               author,
                html, 
-               parent_id 
+               parent_id,
+               YEAR(created)
           FROM {table} 
          WHERE id = %(id)s
     """,
         request.path_params,
     )
+    if not result["ok"]:
+        return JSONResponse(result)
 
     if not result["result"]:
         result["result"] = {}
@@ -449,8 +456,8 @@ async def release(request):
 
     released = await db.execute(
         """
-        INSERT INTO chapter_release (id, parent_id, title, seq, md, html, version)
-        SELECT id, parent_id, title, seq, md, html, %(version)s
+        INSERT INTO chapter_release (id, parent_id, title, seq, author, md, html, version)
+        SELECT id, parent_id, title, seq, author, md, html, %(version)s
         FROM chapter
         """,
         ({"version": version}),
@@ -474,12 +481,17 @@ async def update_citation(request):
     return JSONResponse(result)
 
 
-async def get_citation(request):
+async def get_grammar_version(request):
     citation = await db.fetch_one(
         """
-        SELECT `text`
-          FROM citation
-        """
+        SELECT YEAR(created) as year,
+               version,
+               author,
+               title
+          FROM chapter_release
+          WHERE id = %(id)s
+        """,
+        request.path_params,
     )
     return JSONResponse(citation)
 
@@ -494,5 +506,5 @@ routes = [
     Route("/release", release, methods=["POST"]),
     Route("/get_menu", get_menu, methods=["POST"]),
     Route("/update_citation_text", update_citation, methods=["POST"]),
-    Route("/get_citation_text", get_citation),
+    Route("/get_grammar_version/{id:int}", get_grammar_version),
 ]
