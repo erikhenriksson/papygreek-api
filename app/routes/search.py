@@ -295,6 +295,10 @@ async def search(request):
             ]
             # [f"L{i}.descendant as L{i}" for i in range(len(leaves))]
         )
+
+        if descendant_select:
+            descendant_select = "," + descendant_select
+
         descendant_joins = "\n".join(
             [
                 f'JOIN token_closure L{i} ON R.ancestor = L{i}.ancestor AND L{i}.depth {depths[i]} AND L{i}.descendant IN (SELECT token.id FROM token {"JOIN variation ON token.id=variation.token_id" if leafs_variation_join[i] else ""} {"JOIN token_rdg ON token_rdg.token_id=token.id" if leafs_rdg_join[i] else ""} WHERE ({x})) JOIN token LT{i} ON LT{i}.id = L{i}.descendant'
@@ -321,7 +325,7 @@ async def search(request):
         group_by = f"R, {descendant_groupers}" if descendant_groupers else "R"
 
         sql = f"""
-            SELECT R.ancestor as R, IFNULL(NULLIF(RT.insertion_id, ''), CONCAT(LPAD(RT.n, 4,0), 'a')) AS RN, {descendant_select}
+            SELECT R.ancestor as R, IFNULL(NULLIF(RT.insertion_id, ''), CONCAT(LPAD(RT.n, 4,0), 'a')) AS RN {descendant_select}
             FROM token_closure R
             {descendant_joins}
             JOIN token RT ON R.ancestor = RT.id
@@ -329,8 +333,8 @@ async def search(request):
             {require_distinct_leaves}
             GROUP BY {group_by}
             """
-        # debug(f"This tree query was built: '{sql}, values={this_values}'")
-        # print(sql)
+        debug(f"This tree query was built: '{sql}, values={this_values}'")
+        print(sql)
         closure = await db.fetch_all(sql, this_values)
         if closure["ok"]:
             # debug(
@@ -505,7 +509,15 @@ async def search(request):
             )  # type: ignore
 
             if not result:
-                return JSONResponse({"ok": True, "result": []})
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "detail": "No results",
+                        "error": "error",
+                        "result": "No results",
+                    },
+                    status_code=200,
+                )
 
             query["ids"] = list(set([x[0] for x in result]))
 
@@ -589,7 +601,10 @@ async def search(request):
             variation_join, rdg_join, where, meta_filters, additional_filters
         )
         debug(f"final_sql: {sql}")
+        debug(f"values: {values}")
         result = await db.fetch_all(sql, values)
+
+        print(result)
 
         if result["ok"]:
             executionTime = time.time() - startTime

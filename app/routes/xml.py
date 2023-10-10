@@ -204,7 +204,7 @@ async def generate_treebank(text):
             "hand_meta",
             attrib={
                 "name": aow["name"],
-                "id": str(aow["n"] + 1),
+                "id": str(aow["n"]),
             },
             nsmap=None,
         )
