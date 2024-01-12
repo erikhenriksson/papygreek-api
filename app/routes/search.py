@@ -86,7 +86,7 @@ def get_meta_filters(q):
         )
 
     if q["place-name"].strip():
-        additional_filters += " AND text.place_name = %(place_name)s"
+        additional_filters += " AND text.provenance LIKE %(place_name)s"
         values["place_name"] = q["place-name"].strip()
 
     if q["series-type"].strip():
@@ -334,7 +334,7 @@ async def search(request):
             GROUP BY {group_by}
             """
         debug(f"This tree query was built: '{sql}, values={this_values}'")
-        print(sql)
+        # print(sql)
         closure = await db.fetch_all(sql, this_values)
         if closure["ok"]:
             # debug(
@@ -437,7 +437,7 @@ async def search(request):
                 text.name, 
                 CAST(NULLIF(text.date_not_after, '') AS SIGNED) AS date_not_after,
                 CAST(NULLIF(text.date_not_before, '') AS SIGNED) AS date_not_before,
-                text.place_name, 
+                text.provenance, 
                 token.id, 
                 token.n, 
                 token.aow_n,
@@ -604,7 +604,7 @@ async def search(request):
         debug(f"values: {values}")
         result = await db.fetch_all(sql, values)
 
-        print(result)
+        # print(result)
 
         if result["ok"]:
             executionTime = time.time() - startTime
@@ -825,7 +825,7 @@ async def get_sentence_tree_json(text_id, sentence_n, layer):
 
 async def get_sentence_tree(request):
     q = await request.json()
-    print(q)
+    # print(q)
     doc_id = q["text_id"]
     sentence_id = q["sentence_n"]
     layer = q["layer"]
