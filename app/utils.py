@@ -65,6 +65,7 @@ def cols(table):
             "date_not_before",
             "date_not_after",
             "place_name",
+            "provenance",
             "version",
             "checked",
             "orig_status",

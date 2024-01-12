@@ -539,6 +539,8 @@ async def run_one(path, series_type, flags):
     # Old text exists
     text_id = db_text["id"]
 
+    provenance = await get_place(hgv_meta)
+
     # Update meta
     result = await db.execute(
         """
@@ -549,6 +551,7 @@ async def run_one(path, series_type, flags):
                date_not_before = %s, 
                date_not_after = %s, 
                place_name = %s, 
+               provenance = %s, 
                checked = NOW()
          WHERE id = %s
         """,
@@ -559,6 +562,7 @@ async def run_one(path, series_type, flags):
             hgv_meta["dnb"],
             hgv_meta["dna"],
             hgv_meta["place"],
+            provenance,
             text_id,
         ),
     )
