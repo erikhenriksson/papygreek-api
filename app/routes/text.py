@@ -169,6 +169,7 @@ async def get_text(request):
                date_not_after,
                date_not_before,
                place_name,
+               provenance,
                DATE(tokenized) AS tokenized,
                DATE(checked) AS checked,
                orig_status,
