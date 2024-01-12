@@ -416,6 +416,26 @@ async def check_tokenizer_for_annotated_texts():
     return {"ok": True, "result": "done"}
 
 
+async def get_place(hgv_meta):
+    provenance_key = (
+        "written" if any([x for x in hgv_meta["written"].values()]) else "found"
+    )
+    hgv_meta_flat = {
+        key: "|".join(val) for key, val in hgv_meta[provenance_key].items()
+    }
+
+    place_key = "ancient" if not hgv_meta_flat["nome"] else "nome"
+
+    place = hgv_meta_flat[place_key].strip() or ""
+
+    if hgv_meta_flat["region"]:
+        if place:
+            place += ", "
+        place += hgv_meta_flat["region"]
+
+    return place
+
+
 async def run_one(path, series_type, flags):
     # Init tokenizer
     tokenizer = tokenize_file(path, f"{IDP_PATH}/HGV_meta_EpiDoc")
@@ -441,6 +461,30 @@ async def run_one(path, series_type, flags):
     )
 
     db_text = result["result"]
+
+    # TEMP!
+
+    if "add_provenance" in flags:
+        if db_text:
+            hgv_meta = tokenizer["hgv_meta"]()
+            provenance = await get_place(hgv_meta)
+
+            # Update meta
+            result = await db.execute(
+                """
+                UPDATE `text`
+                SET provenance = %s
+                WHERE id = %s
+                """,
+                (provenance, db_text["id"]),
+            )
+            if not result["ok"]:
+                result["text_id"] = db_text["id"]
+                return result
+            else:
+                return {"ok": True, "result": f"Provenance added to {db_text['id']}"}
+        else:
+            return {"ok": True, "result": f"Skip"}
 
     # check_tokenizations flag: check and return
     if db_text and "check_tokenizations" in flags:
@@ -693,6 +737,7 @@ async def cli(flags):
         check_tokenization
         force
         retokenize
+        add_provenance
     """
     if "file" in flags:
         result = await run_one(flags[-1], "documentary", flags)
